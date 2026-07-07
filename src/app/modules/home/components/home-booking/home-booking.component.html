@@ -1,6 +1,6 @@
 <div class="booking-container">
   <!-- MAIN BACKGROUND -->
-  <img class="home-bg" src="images/home-bg.svg" />
+  <img class="home-bg" [src]="homeBgImage" />
 
   <div class="booking-section">
     <div class="booking-card" [formGroup]="bookingForm" *ngIf="bookingForm">

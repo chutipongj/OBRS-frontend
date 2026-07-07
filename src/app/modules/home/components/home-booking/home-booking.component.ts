@@ -11,6 +11,7 @@ import { ScheduleFilterPayload } from '../../../../shared/interfaces/schedule.in
 import { selectScheduleList } from '../../../../shared/stores/schedule-list/schedule-list.selector';
 import { StationApi } from '../../../../shared/interfaces/station.interface';
 import { selectProvinceWithStation } from '../../../../shared/stores/station/station.selector';
+import { TranslateService } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-home-booking',
@@ -35,6 +36,8 @@ export class HomeBookingComponent implements OnInit, OnDestroy {
   minDate: Date;
   calendarLocale: string;
 
+  homeBgImage: string;
+
   bookingForm: FormGroup;
 
   rawProvinceStationList: Observable<StationApi[]>;
@@ -52,9 +55,11 @@ export class HomeBookingComponent implements OnInit, OnDestroy {
     private fb: FormBuilder,
     private router: Router,
     private store: Store,
-    private appStore: Store<Appstate>
+    private appStore: Store<Appstate>,
+    private translateService: TranslateService
   ) {
     this.minDate = new Date();
+    this.homeBgImage = this.resolveHomeBgImage();
 
     this.rawProvinceStationList = this.store.pipe(
       select(selectProvinceWithStation)
@@ -68,6 +73,18 @@ export class HomeBookingComponent implements OnInit, OnDestroy {
       this.allProvinceStationList = stationList || [];
       this.syncStationOptions();
     });
+
+    this.translateService.onLangChange
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        this.homeBgImage = this.resolveHomeBgImage();
+      });
+  }
+
+  private resolveHomeBgImage(): string {
+    return this.translateService.currentLang === 'th'
+      ? 'images/home-bg-th.svg'
+      : 'images/home-bg-en.png';
   }
 
   ngOnDestroy(): void {

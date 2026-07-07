@@ -1,17 +1,24 @@
 import { FormBuilder } from '@angular/forms';
 
 import { HomeBookingComponent } from './home-booking.component';
-import { createRouterStub, createStoreStub } from '../../../../testing/test-stubs';
+import {
+  createRouterStub,
+  createStoreStub,
+  createTranslateStub,
+} from '../../../../testing/test-stubs';
 
 describe('HomeBookingComponent', () => {
   let component: HomeBookingComponent;
+  let translateStub: any;
 
   beforeEach(() => {
+    translateStub = createTranslateStub();
     component = new HomeBookingComponent(
       new FormBuilder(),
       createRouterStub(),
       createStoreStub(),
-      createStoreStub()
+      createStoreStub(),
+      translateStub
     );
   });
 
@@ -24,5 +31,36 @@ describe('HomeBookingComponent', () => {
       { type: 'ADULT', count: 1 },
       { type: 'KIDS', count: 0 },
     ]);
+  });
+
+  it('uses the English background for non-Thai languages', () => {
+    expect(component.homeBgImage).toBe('images/home-bg-en.png');
+  });
+
+  it('uses the Thai background when the current language is Thai', () => {
+    translateStub.currentLang = 'th';
+    component = new HomeBookingComponent(
+      new FormBuilder(),
+      createRouterStub(),
+      createStoreStub(),
+      createStoreStub(),
+      translateStub
+    );
+
+    expect(component.homeBgImage).toBe('images/home-bg-th.svg');
+  });
+
+  it('swaps the background image when the language changes', () => {
+    component.ngOnInit();
+
+    translateStub.currentLang = 'th';
+    translateStub.onLangChange.next({ lang: 'th', translations: {} });
+    expect(component.homeBgImage).toBe('images/home-bg-th.svg');
+
+    translateStub.currentLang = 'en';
+    translateStub.onLangChange.next({ lang: 'en', translations: {} });
+    expect(component.homeBgImage).toBe('images/home-bg-en.png');
+
+    component.ngOnDestroy();
   });
 });
