@@ -50,12 +50,29 @@ describe('HomeBookingComponent', () => {
     expect(component.homeBgImage).toBe('images/home-bg-th.svg');
   });
 
+  it('uses the Chinese background when the current language is Chinese', () => {
+    translateStub.currentLang = 'zh';
+    component = new HomeBookingComponent(
+      new FormBuilder(),
+      createRouterStub(),
+      createStoreStub(),
+      createStoreStub(),
+      translateStub
+    );
+
+    expect(component.homeBgImage).toBe('images/home-bg-cn.png');
+  });
+
   it('swaps the background image when the language changes', () => {
     component.ngOnInit();
 
     translateStub.currentLang = 'th';
     translateStub.onLangChange.next({ lang: 'th', translations: {} });
     expect(component.homeBgImage).toBe('images/home-bg-th.svg');
+
+    translateStub.currentLang = 'zh';
+    translateStub.onLangChange.next({ lang: 'zh', translations: {} });
+    expect(component.homeBgImage).toBe('images/home-bg-cn.png');
 
     translateStub.currentLang = 'en';
     translateStub.onLangChange.next({ lang: 'en', translations: {} });

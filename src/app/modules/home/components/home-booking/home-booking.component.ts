@@ -82,9 +82,14 @@ export class HomeBookingComponent implements OnInit, OnDestroy {
   }
 
   private resolveHomeBgImage(): string {
-    return this.translateService.currentLang === 'th'
-      ? 'images/home-bg-th.svg'
-      : 'images/home-bg-en.png';
+    switch (this.translateService.currentLang) {
+      case 'th':
+        return 'images/home-bg-th.svg';
+      case 'zh':
+        return 'images/home-bg-cn.png';
+      default:
+        return 'images/home-bg-en.png';
+    }
   }
 
   ngOnDestroy(): void {
