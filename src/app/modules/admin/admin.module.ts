@@ -14,6 +14,9 @@ import { SchedulesPageComponent } from './pages/schedules/schedules-page.compone
 import { BookingsPageComponent } from './pages/bookings/bookings-page.component';
 import { AdminModalBackdropDirective } from './components/admin-modal-backdrop.directive';
 import { UsabilityReportsPageComponent } from './pages/usability-reports/usability-reports-page.component';
+import { PromotionsPageComponent } from './pages/promotions/promotions-page.component';
+import { RoundTripPromotionCardComponent } from './pages/promotions/round-trip-promotion-card/round-trip-promotion-card.component';
+import { ReportsPageComponent } from './pages/reports/reports-page.component';
 import { AuthGuard } from '../../auth/auth.guard';
 
 const routes: Routes = [
@@ -63,12 +66,27 @@ const routes: Routes = [
         data: { titleKey: 'ADMIN.PAGES.BOOKINGS_MANAGEMENT', subtitleKey: 'ADMIN.BOOKINGS.SUBTITLE' },
       },
       {
+        path: 'promotions',
+        component: PromotionsPageComponent,
+        data: { titleKey: 'ADMIN.PAGES.PROMOTIONS', subtitleKey: 'ADMIN.PROMOTIONS.SUBTITLE' },
+      },
+      {
         path: 'usability-reports',
         component: UsabilityReportsPageComponent,
         canActivate: [AuthGuard],
         data: {
           titleKey: 'ADMIN.PAGES.USABILITY_REPORTS',
           subtitleKey: 'ADMIN.USABILITY_REPORTS.SUBTITLE',
+          requiredRoles: ['admin'],
+        },
+      },
+      {
+        path: 'reports',
+        component: ReportsPageComponent,
+        canActivate: [AuthGuard],
+        data: {
+          titleKey: 'ADMIN.PAGES.REPORTS',
+          subtitleKey: 'ADMIN.REPORTS.SUBTITLE',
           requiredRoles: ['admin'],
         },
       },
@@ -94,6 +112,9 @@ const routes: Routes = [
     BookingsPageComponent,
     AdminModalBackdropDirective,
     UsabilityReportsPageComponent,
+    PromotionsPageComponent,
+    RoundTripPromotionCardComponent,
+    ReportsPageComponent,
   ],
   imports: [SharedModule, RouterModule.forChild(routes), CalendarModule, AdminSharedModule],
 })

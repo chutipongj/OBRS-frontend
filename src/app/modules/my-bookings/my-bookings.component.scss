@@ -2,7 +2,7 @@
 
 .my-bookings {
   min-height: 60vh;
-  padding: 32px clamp(16px, 6vw, 120px);
+  padding: $space-xl clamp(16px, 6vw, 120px);
   background-color: $secondary-grey;
 }
 
@@ -17,7 +17,7 @@
   h1 {
     margin: 0 0 6px;
     font-size: 28px;
-    font-weight: 700;
+    font-weight: $font-weight-bold;
     color: $text-black;
   }
 
@@ -32,17 +32,17 @@
 .filter-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: $space-2xs;
   margin-bottom: 20px;
 }
 
 .filter-pill {
   padding: 7px 16px;
   border: 1px solid $primary-lightgrey;
-  border-radius: 999px;
+  border-radius: $radius-pill;
   background-color: $primary-white;
   color: $text-softblack;
-  font-size: 14px;
+  font-size: $font-size-sm;
   cursor: pointer;
   transition: all 0.15s ease;
 
@@ -54,7 +54,7 @@
     background-color: $secondary-blue;
     border-color: $secondary-blue;
     color: $text-white;
-    font-weight: 600;
+    font-weight: $font-weight-semibold;
   }
 }
 
@@ -72,29 +72,29 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: $space-xs;
 
   .booking-card__ref {
     display: flex;
     flex-direction: column;
 
     .label {
-      font-size: 12px;
+      font-size: $font-size-xs;
       color: $text-lightgrey;
     }
 
     strong {
-      font-size: 18px;
+      font-size: $font-size-md;
       color: $text-black;
     }
   }
 }
 
 .status-badge {
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: $space-3xs 12px;
+  border-radius: $radius-pill;
+  font-size: $font-size-xs;
+  font-weight: $font-weight-semibold;
   text-transform: capitalize;
   white-space: nowrap;
 
@@ -125,12 +125,12 @@
   gap: 10px;
   margin: 14px 0;
   font-size: 17px;
-  font-weight: 600;
+  font-weight: $font-weight-semibold;
   color: $text-black;
 
   i {
     color: $primary-blue;
-    font-size: 20px;
+    font-size: $font-size-lg;
   }
 
   .route-text {
@@ -138,8 +138,8 @@
   }
 
   .trip-type {
-    font-size: 12px;
-    font-weight: 500;
+    font-size: $font-size-xs;
+    font-weight: $font-weight-medium;
     color: $text-blue;
     background-color: $secondary-lightgrey;
     padding: 3px 10px;
@@ -150,7 +150,7 @@
 .booking-card__meta {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: $space-xs;
   margin: 0 0 16px;
   padding: 14px 0;
   border-top: 1px dashed $primary-lightgrey;
@@ -161,17 +161,17 @@
   }
 
   dt {
-    font-size: 12px;
+    font-size: $font-size-xs;
     color: $text-lightgrey;
     margin-bottom: 4px;
-    font-weight: 400;
+    font-weight: $font-weight-regular;
   }
 
   dd {
     margin: 0;
     font-size: 15px;
     color: $text-softblack;
-    font-weight: 600;
+    font-weight: $font-weight-semibold;
   }
 
   .amount {
@@ -184,59 +184,198 @@
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
-
-  .not-cancellable {
-    font-size: 13px;
-    color: $text-lightgrey;
-  }
 }
 
-.btn-ticket {
+// Single per-card overflow trigger — replaces the old three inline buttons
+// (View e-ticket / Cancel booking / Reschedule), all now items in the popup
+// menu below. Kebab icon matches the existing convention in
+// WalkInTripBrowserComponent (staff module) — reused, not reinvented.
+.actions-menu-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 20px;
-  border: 1px solid $secondary-blue;
-  border-radius: 8px;
-  background-color: $secondary-blue;
-  color: $text-white;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-
-  i {
-    font-size: 16px;
-  }
-
-  &:hover {
-    background-color: $text-primary;
-    border-color: $text-primary;
-  }
-}
-
-.btn-cancel {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 20px;
-  border: 1px solid $text-red;
-  border-radius: 8px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid $primary-lightgrey;
+  border-radius: $radius-pill;
   background-color: $primary-white;
-  color: $text-red;
-  font-size: 14px;
-  font-weight: 600;
+  color: $text-softblack;
+  font-size: $font-size-lg;
   cursor: pointer;
   transition: all 0.15s ease;
 
-  &:hover:not(:disabled) {
-    background-color: $text-red;
-    color: $text-white;
+  &:hover,
+  &:focus-visible {
+    border-color: $secondary-blue;
+    color: $secondary-blue;
+  }
+}
+
+// Rendered inside <p-menu>'s custom item template (PrimeNG appends the
+// popup to <body>, but Angular's view-encapsulation attribute still scopes
+// this component's styles to it — the same mechanism WalkInTripBrowser
+// relies on for its own p-menu). One primary role per menu: Reschedule/View
+// e-ticket are neutral text items; Cancel booking is the only destructive
+// (danger) one, per design-system §4.
+//
+// Every item carries a leading `bi bi-*` icon in `__icon-slot` — PrimeNG
+// reserves that gutter space for an icon regardless (icon-less items used to
+// render it blank); giving every item an icon fills it instead of leaving a
+// dead margin (OBRS-170).
+// Icon + label on a single centered row. The disabled reason is no longer inline
+// (it moved to the item's `title` tooltip, shown on hover) so every row is one
+// short line — the menu stays compact.
+.action-menu-item {
+  position: relative; // anchor for the disabled-reason tooltip below
+  display: flex;
+  align-items: center;
+  gap: $space-2xs;
+  padding: $space-3xs $space-xs; // tight + equal vertical (top==bottom)
+  width: 100%;
+
+  &__icon-slot {
+    flex: 0 0 auto;
+    width: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: $text-lightblack;
+    // Icons sit a step above the text, matching the app convention (nav/dropdown
+    // icons are ~$font-size-md while body text is $font-size-sm).
+    font-size: $font-size-md;
+    line-height: 1;
   }
 
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+  &__label {
+    font-size: $font-size-sm;
+    color: $text-black;
+    line-height: $line-height-base;
+  }
+
+  &--danger &__icon-slot,
+  &--danger &__label {
+    color: $text-red;
+  }
+
+  // Disabled-reason tooltip. Mirrors the app's existing tooltip standard
+  // (register.component's `.tooltip-box`): same $secondary-grey surface, 6px
+  // radius, soft shadow, and an arrow — but shown INSTANTLY on hover
+  // (`display: block`, no delay) instead of the browser's native `title`. The
+  // menu is pinned to the right of each card, so the tooltip floats to the LEFT
+  // of the row (over the empty card body), vertically centered on the hovered
+  // row — never overlapping the menu box or its sibling rows. `.p-menu` has
+  // `overflow: visible`, so it isn't clipped. Dark-mode override lives in
+  // styles/dark-theme.scss beside the `.tooltip-box` one (same split register uses).
+  &__tooltip {
+    display: none;
+    position: absolute;
+    right: calc(100% + #{$space-2xs});
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1000;
+    padding: $space-3xs $space-xs;
+    border-radius: 6px;
+    background-color: $secondary-grey;
+    color: $text-black;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    font-size: $font-size-xs;
+    line-height: $line-height-base;
+    white-space: nowrap;
+    pointer-events: none; // a hint, never a hit target
+
+    &::after {
+      content: "";
+      position: absolute;
+      left: 100%; // right edge of the tooltip, arrow points right toward the menu
+      top: 50%;
+      transform: translateY(-50%);
+      border: 5px solid transparent;
+      border-left-color: $secondary-grey;
+    }
+  }
+
+  // Instant reveal on hover of the disabled row (its `pointer-events` is
+  // re-enabled below so the hover actually registers).
+  &--disabled:hover &__tooltip {
+    display: block;
+  }
+}
+
+// The PrimeNG menu list ships a 32px LEFT padding (0 on the right), which is
+// what pushed every row far off the left edge — the bulk of the "too much space
+// before the text" (leading ≈ 60px vs ~16px trailing). Zero the horizontal list
+// padding (rows then indent only by the item's own small padding) and keep a
+// tight vertical rhythm. It ALSO ships a `margin-bottom: 16px`, which made the
+// space after the last row (28px) far exceed the space before the first (12px) —
+// zero the margin so top and bottom breathing room match. `!important` beats the
+// theme's normal padding/margin rules.
+::ng-deep .my-bookings-action-menu .p-menu-list {
+  padding: $space-3xs 0 !important;
+  margin: 0 !important;
+}
+
+// PrimeNG hard-sets `.p-menu { width: 12.5rem }` (200px) — THAT fixed width (not
+// the reason text or a min-width) is what left short rows with a big trailing
+// gap. Size to content instead (capped by `.action-menu-item__text` max-width),
+// so the menu hugs its widest row and short rows no longer stretch to 200px.
+::ng-deep .my-bookings-action-menu.p-menu {
+  width: max-content !important;
+  min-width: 0 !important;
+  max-width: 260px; // safety cap so an unexpectedly long label can't blow it out
+}
+
+// PrimeNG's own `<li class="p-menuitem">` wrapper is rendered by the p-menu
+// component itself, not by anything in this component's template, so it
+// never carries this component's view-encapsulation attribute — `:host`
+// can't reach it either, since `appendTo="body"` detaches the whole popup
+// (styleClass="my-bookings-action-menu" travels with it) from the host's DOM
+// subtree. `::ng-deep` is therefore required and unavoidable here; scoping
+// the selector to `.my-bookings-action-menu` (rather than a bare `.p-menu`)
+// keeps the override from leaking onto unrelated p-menu instances elsewhere
+// in the app.
+//
+// Enabled items get an explicit `pointer` rather than relying on PrimeNG's
+// default. For disabled items PrimeNG puts `.p-disabled` (with its own
+// `cursor: default`) on the <li> AND `pointer-events: none` on the inner
+// `.p-menuitem-content` it renders — so `not-allowed` needs `!important` to
+// beat PrimeNG's rule, and pointer-events must be re-enabled on BOTH the <li>
+// and the content div (the topmost element under the pointer) for the cursor
+// to actually paint over the whole row (OBRS-170; verified live — the plain
+// rule computed to `default`).
+::ng-deep .my-bookings-action-menu .p-menuitem {
+  cursor: pointer;
+
+  // Disabled items: PrimeNG's `.p-disabled *` sets `pointer-events: none` on the
+  // inner `.p-menuitem-content` AND on our own `.action-menu-item` (and its
+  // children). Two things break as a result: (1) a cursor set on our row never
+  // paints, and (2) the native `title` tooltip — set on `.action-menu-item` —
+  // never fires, because hover falls THROUGH the pointer-events:none row down to
+  // `.p-menuitem-content` (which carries no title). Re-enable hit-testing on BOTH
+  // the content and our own row so `.action-menu-item` becomes the topmost hovered
+  // target: it can then paint the `not-allowed` cursor and surface its `title`
+  // tooltip. The item is still disabled in PrimeNG's model (aria-disabled + no
+  // command binding), so re-enabling pointer-events doesn't make it clickable —
+  // it only lets hover register (OBRS-170; verified live — itemPE was `none`, so
+  // the tooltip never showed until this).
+  &.p-disabled .p-menuitem-content,
+  &.p-disabled .action-menu-item {
+    pointer-events: auto;
+  }
+}
+
+// Paint the disabled cursor on our own row + its children, scoped to this menu.
+// PrimeNG ships `@layer primeng { .p-disabled, .p-disabled * { cursor: default
+// !important } }`. A cascade-LAYERED `!important` beats an unlayered one no
+// matter the specificity, so an ordinary override (even `!important`) loses —
+// verified live. We therefore add our override to the SAME `primeng` layer, where
+// the normal cascade resumes and our higher-specificity selector wins. `::ng-deep`
+// is required because the popup is `appendTo="body"` (detached from this
+// component's encapsulation); `.my-bookings-action-menu` keeps it scoped.
+@layer primeng {
+  ::ng-deep .my-bookings-action-menu .p-menuitem.p-disabled .action-menu-item,
+  ::ng-deep .my-bookings-action-menu .p-menuitem.p-disabled .action-menu-item * {
+    cursor: not-allowed !important;
   }
 }
 
@@ -245,7 +384,7 @@
   height: 14px;
   border: 2px solid currentColor;
   border-top-color: transparent;
-  border-radius: 50%;
+  border-radius: $radius-circle;
   animation: my-bookings-spin 0.7s linear infinite;
 }
 
@@ -261,7 +400,7 @@
   background-color: $primary-white;
   border: 1px solid $primary-lightgrey;
   border-radius: 14px;
-  padding: 40px 24px;
+  padding: $space-2xl 24px;
 
   i {
     font-size: 40px;
@@ -279,9 +418,9 @@
 .btn-secondary {
   display: inline-block;
   padding: 10px 22px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: $radius-sm;
+  font-size: $font-size-sm;
+  font-weight: $font-weight-semibold;
   cursor: pointer;
   text-decoration: none;
 }
@@ -302,7 +441,7 @@
 .booking-card--skeleton {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: $space-xs;
 }
 
 .skeleton {

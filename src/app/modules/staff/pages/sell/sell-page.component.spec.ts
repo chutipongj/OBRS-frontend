@@ -2,7 +2,7 @@ import { BehaviorSubject, of, throwError, Subject } from 'rxjs';
 import { FormBuilder } from '@angular/forms';
 import { SellPageComponent } from './sell-page.component';
 import { WalkInTripDto, WalkInRouteGroupDto } from '../../../../services/staff/staff-api.service';
-import { createRouterStub, createStoreStub, createTranslateStub } from '../../../../testing/test-stubs';
+import { createTranslateStub } from '../../../../testing/test-stubs';
 import { WalkInCheckoutPayload } from '../../components/walk-in-checkout/walk-in-checkout.component';
 
 function makeTrip(overrides: Partial<WalkInTripDto> = {}): WalkInTripDto {
@@ -36,6 +36,7 @@ function createStaffApiStub(overrides: Partial<{
   createWalkInBooking: ReturnType<typeof jasmine.createSpy>;
   payWalkIn: ReturnType<typeof jasmine.createSpy>;
   getRouteSegments: ReturnType<typeof jasmine.createSpy>;
+  getRouteStops: ReturnType<typeof jasmine.createSpy>;
 }> = {}): any {
   return {
     getWalkInSchedules: jasmine.createSpy('getWalkInSchedules').and.returnValue(of({ data: [] })),
@@ -44,6 +45,7 @@ function createStaffApiStub(overrides: Partial<{
     ),
     payWalkIn: jasmine.createSpy('payWalkIn').and.returnValue(of({ data: {} })),
     getRouteSegments: jasmine.createSpy('getRouteSegments').and.returnValue(of({ data: { stopPairs: [] } })),
+    getRouteStops: jasmine.createSpy('getRouteStops').and.returnValue(of({ data: { stops: [] } })),
     ...overrides,
   };
 }
@@ -100,8 +102,6 @@ function makeComponent(
   scheduleStore = createScheduleStoreStub()
 ): SellPageComponent {
   return new SellPageComponent(
-    createRouterStub(),
-    createStoreStub(),
     staffApi,
     alertService,
     createTranslateStub(),
@@ -329,10 +329,51 @@ describe('SellPageComponent', () => {
 
       const callArg = api.createWalkInBooking.calls.mostRecent().args[0];
       const passengers: { passengerType: string; seatNumber: string }[] = callArg.departureSchedule.passengers;
-      const b1 = passengers.find((p) => p.seatNumber === 'B1');
-      const b2 = passengers.find((p) => p.seatNumber === 'B2');
+      // Booking payload seatNumber is normalized to bare digits (OBRS-179) — the
+      // label 'B1'/'B2' is UI-only, the backend contract is numeric.
+      const b1 = passengers.find((p) => p.seatNumber === '1');
+      const b2 = passengers.find((p) => p.seatNumber === '2');
       expect(b1?.passengerType).toBe('male');
       expect(b2?.passengerType).toBe('female');
+    });
+  });
+
+  describe('onSell seatNumber normalization (OBRS-179 regression)', () => {
+    it('sends the bare numeric seat for a van trip, not the letter label', () => {
+      const api = createStaffApiStub();
+      const comp = makeComponent(api);
+      (comp as any).selectedTrip = makeTrip({ vehicleType: 'van' });
+      (comp as any).onSeatToggled('A2'); // walk-in van seat map label
+      setSegmentFare(comp, 300);
+
+      (comp as any).onSell(validPayload);
+
+      const callArg = api.createWalkInBooking.calls.mostRecent().args[0];
+      const passengers: { seatNumber: string }[] = callArg.departureSchedule.passengers;
+      // This is the exact regression witness for OBRS-179: the old behavior sent
+      // the raw label 'A2', which 400'd as BOOKING_ERROR_SEATS_NOT_FOUND: A2.
+      expect(passengers[0].seatNumber).toBe('2');
+      expect(passengers[0].seatNumber).not.toBe('A2');
+    });
+
+    it('sends the bare numeric seat for a bus trip label too', () => {
+      const api = createStaffApiStub();
+      const comp = makeComponent(api);
+      (comp as any).selectedTrip = makeTrip({ vehicleType: 'bus' });
+      (comp as any).onSeatToggled('B12');
+      setSegmentFare(comp, 300);
+
+      (comp as any).onSell(validPayload);
+
+      const callArg = api.createWalkInBooking.calls.mostRecent().args[0];
+      const passengers: { seatNumber: string }[] = callArg.departureSchedule.passengers;
+      expect(passengers[0].seatNumber).toBe('12');
+    });
+
+    it('leaves the displayed selectedSeats label untouched (chips/highlighting keep "A2")', () => {
+      const comp = makeComponent();
+      (comp as any).onSeatToggled('A2');
+      expect((comp as any).selectedSeats).toEqual(['A2']);
     });
   });
 
@@ -350,6 +391,29 @@ describe('SellPageComponent', () => {
       const passenger = callArg.departureSchedule.passengers[0];
       expect('gender' in passenger).toBeFalse();
       expect('identityCardNumber' in passenger).toBeFalse();
+    });
+
+    it('on a successful sale clears the selected trip, reloads trips, and confirms in place — no /e-ticket navigation (OBRS-188)', () => {
+      const api = createStaffApiStub();
+      const alert = createAlertStub();
+      const comp = makeComponent(api, alert);
+      (comp as any).selectedTrip = makeTrip();
+      (comp as any).selectedSeats = ['B1'];
+      setSegmentFare(comp, 300);
+      const loadTripsSpy = spyOn(comp as any, 'loadTrips');
+
+      (comp as any).onSell(validPayload);
+
+      expect(api.createWalkInBooking).toHaveBeenCalled();
+      expect(api.payWalkIn).toHaveBeenCalled();
+      // Seat map is closed so the just-sold seat can't still render as available,
+      // and the trip list is reloaded so the sold-count badge updates.
+      expect((comp as any).selectedTrip).toBeNull();
+      expect((comp as any).selectedSeats).toEqual([]);
+      expect(loadTripsSpy).toHaveBeenCalled();
+      // Staff get an in-place success toast instead of being bounced from the
+      // customerArea /e-ticket route.
+      expect(alert.success).toHaveBeenCalled();
     });
 
     it('includes identityCardNumber in passenger when provided', () => {
@@ -553,8 +617,6 @@ describe('SellPageComponent', () => {
     } {
       const translate = createTranslateStub();
       const comp = new SellPageComponent(
-        createRouterStub(),
-        createStoreStub(),
         api,
         createAlertStub(),
         translate,
@@ -635,6 +697,59 @@ describe('SellPageComponent', () => {
       (translate.onLangChange as Subject<unknown>).next({ lang: 'th' });
       expect((comp as any).pickupSlug).toBe('stop_a'); // origin
       expect((comp as any).dropoffSlug).toBe('stop_c'); // destination
+    });
+  });
+
+  describe('per-stop times & ordering from route-stops (OBRS-191)', () => {
+    const trip = makeTrip({ departureDateTime: '2026-07-01T08:00:00' });
+
+    it('sets every stop time to departure + its offsetMinutesFromOrigin', () => {
+      const comp = makeComponent();
+      (comp as any).stopOffsetMap = new Map([['origin', 0], ['mid', 40], ['dest', 70]]);
+      (comp as any)._buildStopTimes(trip);
+      expect((comp as any).stopTime('origin')).toBe('08:00');
+      expect((comp as any).stopTime('mid')).toBe('08:40');
+      expect((comp as any).stopTime('dest')).toBe('09:10');
+    });
+
+    it('gives parallel origin-area stops sharing an offset the same time (not just one)', () => {
+      const comp = makeComponent();
+      // Regression (OBRS-191): the old segment-graph approach left only the origin
+      // with a time on multi-pickup routes; route offsets time every pickup point.
+      (comp as any).stopOffsetMap = new Map([['p1', 0], ['p2', 0], ['d1', 40]]);
+      (comp as any)._buildStopTimes(trip);
+      expect((comp as any).stopTime('p1')).toBe('08:00');
+      expect((comp as any).stopTime('p2')).toBe('08:00');
+      expect((comp as any).stopTime('d1')).toBe('08:40');
+    });
+
+    it('returns an empty time for a stop with no known offset', () => {
+      const comp = makeComponent();
+      (comp as any).stopOffsetMap = new Map([['origin', 0]]);
+      (comp as any)._buildStopTimes(trip);
+      expect((comp as any).stopTime('ghost')).toBe('');
+    });
+
+    it('orders sellable stops by the route stop_order, not the segment-graph shape', () => {
+      const comp = makeComponent();
+      (comp as any).stopOrderMap = new Map([['a', 1], ['b', 2], ['c', 3]]);
+      const pairs = [
+        { fromStop: { slug: 'c', name: 'C' }, toStop: { slug: 'a', name: 'A' } },
+        { fromStop: { slug: 'a', name: 'A' }, toStop: { slug: 'b', name: 'B' } },
+      ];
+      const ordered = (comp as any)._buildOrderedStops(pairs);
+      expect(ordered.map((s: { slug: string }) => s.slug)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('sorts stops missing from route-stops to the end', () => {
+      const comp = makeComponent();
+      (comp as any).stopOrderMap = new Map([['a', 1], ['b', 2]]);
+      const pairs = [
+        { fromStop: { slug: 'a', name: 'A' }, toStop: { slug: 'zzz', name: 'Z' } },
+        { fromStop: { slug: 'b', name: 'B' }, toStop: { slug: 'zzz', name: 'Z' } },
+      ];
+      const ordered = (comp as any)._buildOrderedStops(pairs);
+      expect(ordered.map((s: { slug: string }) => s.slug)).toEqual(['a', 'b', 'zzz']);
     });
   });
 
@@ -722,7 +837,7 @@ describe('SellPageComponent', () => {
         routes: [{ slug: 'bkk-cm', label_th: 'BKK-CM', label_en: 'BKK-CM', translations: [] }],
         vehicleTypes: [{ slug: 'bus', label_th: 'บัส', label_en: 'Bus', translations: [] }],
         vehicles: [],
-        users: [],
+        drivers: [],
         lookups: [],
       };
     }
@@ -730,7 +845,7 @@ describe('SellPageComponent', () => {
     it('applies the first-option default to route (but NOT vehicleType) when store loads while create modal is open', () => {
       const { store, subject, hasValueRef } = createControllableScheduleStoreStub();
       const comp = new SellPageComponent(
-        createRouterStub(), createStoreStub(), createStaffApiStub(),
+        createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
         createAdminApiStub(), store
       );
@@ -757,7 +872,7 @@ describe('SellPageComponent', () => {
     it('does NOT overwrite a user-picked route when store data arrives', () => {
       const { store, subject, hasValueRef } = createControllableScheduleStoreStub();
       const comp = new SellPageComponent(
-        createRouterStub(), createStoreStub(), createStaffApiStub(),
+        createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
         createAdminApiStub(), store
       );
@@ -783,7 +898,7 @@ describe('SellPageComponent', () => {
     it('does NOT apply first-option defaults when the form is in edit mode', () => {
       const { store, subject, hasValueRef } = createControllableScheduleStoreStub();
       const comp = new SellPageComponent(
-        createRouterStub(), createStoreStub(), createStaffApiStub(),
+        createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
         createAdminApiStub(), store
       );
@@ -807,7 +922,7 @@ describe('SellPageComponent', () => {
     it('does NOT apply defaults when the create form is closed', () => {
       const { store, subject, hasValueRef } = createControllableScheduleStoreStub();
       const comp = new SellPageComponent(
-        createRouterStub(), createStoreStub(), createStaffApiStub(),
+        createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
         createAdminApiStub(), store
       );

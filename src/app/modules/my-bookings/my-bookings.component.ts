@@ -1,23 +1,38 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ViewChild } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { LangChangeEvent, TranslateService } from '@ngx-translate/core';
+import { MenuItem } from 'primeng/api';
+import { Menu } from 'primeng/menu';
 import dayjs from 'dayjs';
+import { formatDisplayDateTime } from '../../shared/lib/display-date-time';
 import { Observable, combineLatest, map, startWith } from 'rxjs';
 import {
   CANCELLABLE_BOOKING_STATUS,
   MyBookingDto,
   MyBookingView,
+  RESCHEDULE_WINDOW_HOURS,
   SupportedLocale,
   getStopLabel,
   normalizeStatusCode,
   toAmountNumber,
 } from '../../shared/interfaces/my-booking.interface';
+import { CHANGE_SEAT_WINDOW_HOURS } from '../../shared/interfaces/change-seat.interface';
+import { CHANGE_STOP_WINDOW_HOURS } from '../../shared/interfaces/change-stop.interface';
 import {
+  closeChangeSeatDialog,
+  closeChangeStopDialog,
+  closeRescheduleDialog,
   invokeLoadMyBookingsApi,
+  openChangeSeatDialog,
+  openChangeStopDialog,
+  openRescheduleDialog,
   requestCancelBooking,
 } from './store/my-bookings.action';
 import {
+  selectChangeSeatDialogBookingId,
+  selectChangeStopDialogBookingId,
   selectMyBookings,
+  selectRescheduleDialogBookingId,
 } from './store/my-bookings.selector';
 
 interface MyBookingsVm {
@@ -26,6 +41,36 @@ interface MyBookingsVm {
   loaded: boolean;
   error: string | null;
   cancellingBookingId: number | null;
+}
+
+interface RescheduleEligibility {
+  eligible: boolean;
+  reasonKey: string | null;
+}
+
+interface ChangeSeatEligibility {
+  eligible: boolean;
+  reasonKey: string | null;
+}
+
+interface ChangeStopEligibility {
+  eligible: boolean;
+  reasonKey: string | null;
+}
+
+/** A single card's overflow menu item. Reschedule is always included
+ * (disabled + `reasonText` when ineligible — never omitted); View e-ticket /
+ * Cancel booking keep their existing conditional presence. */
+export interface ActionMenuItem extends MenuItem {
+  /** Localized disabled-reason, rendered as subtext under the label. */
+  reasonText?: string;
+  /** Destructive item (Cancel booking) — styled distinctly from the rest. */
+  danger?: boolean;
+  /** This specific row's cancel is in flight — shows an inline spinner. */
+  submitting?: boolean;
+  // `icon` (inherited from PrimeNG's `MenuItem`) is a leading `bi bi-*`
+  // bootstrap-icon class — every item sets one so the menu never renders
+  // PrimeNG's blank icon-slot gutter (OBRS-170).
 }
 
 interface StatusFilterOption {
@@ -46,6 +91,24 @@ export class MyBookingsComponent implements OnInit {
   /** Booking whose e-ticket modal is open, or null when closed. */
   activeTicketBookingId: number | null = null;
 
+  /** Booking whose reschedule dialog is open — NgRx-driven so the dialog
+   * opens optimistically the instant `openRescheduleDialog` dispatches. */
+  rescheduleDialogBookingId$!: Observable<number | null>;
+
+  /** Booking whose change-seat dialog is open — same optimistic-open
+   * contract as `rescheduleDialogBookingId$` (OBRS-110). */
+  changeSeatDialogBookingId$!: Observable<number | null>;
+
+  /** Booking whose change-stop dialog is open — same optimistic-open
+   * contract as `rescheduleDialogBookingId$` (OBRS-110 wave 2). */
+  changeStopDialogBookingId$!: Observable<number | null>;
+
+  /** Single shared popup menu, rebuilt per row on open — same pattern as
+   * `WalkInTripBrowserComponent.tripActionMenu` (staff module). */
+  @ViewChild('actionMenu') actionMenu!: Menu;
+  actionMenuItems: ActionMenuItem[] = [];
+  private lastActionMenuTrigger: HTMLButtonElement | null = null;
+
   readonly statusFilters: StatusFilterOption[] = [
     { value: '', labelKey: 'MY_BOOKINGS.FILTERS.ALL' },
     { value: 'confirmed', labelKey: 'MY_BOOKINGS.FILTERS.CONFIRMED' },
@@ -55,12 +118,6 @@ export class MyBookingsComponent implements OnInit {
   ];
 
   vm$!: Observable<MyBookingsVm>;
-
-  private readonly monthLabels: Record<SupportedLocale, readonly string[]> = {
-    en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-    th: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
-    zh: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
-  };
 
   constructor(
     private readonly store: Store,
@@ -83,6 +140,10 @@ export class MyBookingsComponent implements OnInit {
       }))
     );
 
+    this.rescheduleDialogBookingId$ = this.store.select(selectRescheduleDialogBookingId);
+    this.changeSeatDialogBookingId$ = this.store.select(selectChangeSeatDialogBookingId);
+    this.changeStopDialogBookingId$ = this.store.select(selectChangeStopDialogBookingId);
+
     this.store.dispatch(invokeLoadMyBookingsApi({ status: null }));
   }
 
@@ -100,6 +161,121 @@ export class MyBookingsComponent implements OnInit {
 
   onCancel(booking: MyBookingView): void {
     this.store.dispatch(requestCancelBooking({ booking }));
+  }
+
+  /**
+   * Builds and opens the single per-card overflow menu (View e-ticket,
+   * Reschedule, Cancel booking). Reschedule is always included — disabled
+   * with its localized reason as `reasonText` when ineligible, never
+   * omitted, since presenting *some* Reschedule affordance (even a disabled
+   * one explaining why) is the whole point of OBRS-83. View e-ticket / Cancel
+   * booking keep their existing conditional presence (only shown when
+   * applicable), same as the previous inline-button layout.
+   */
+  openActionMenu(event: Event, booking: MyBookingView, cancellingBookingId: number | null): void {
+    event.stopPropagation();
+
+    const items: ActionMenuItem[] = [];
+
+    if (booking.paid) {
+      items.push({
+        label: this.translate.instant('MY_BOOKINGS.VIEW_TICKET'),
+        icon: 'bi-ticket-perforated',
+        command: () => this.onViewTicket(booking),
+      });
+    }
+
+    items.push({
+      label: this.translate.instant('MY_BOOKINGS.RESCHEDULE.ACTION'),
+      icon: 'bi-arrow-repeat',
+      disabled: !booking.rescheduleEligible,
+      reasonText: booking.rescheduleEligible
+        ? undefined
+        : this.translate.instant(booking.rescheduleReasonKey ?? ''),
+      command: () => this.onReschedule(booking),
+    });
+
+    items.push({
+      label: this.translate.instant('MY_BOOKINGS.CHANGE_SEAT.ACTION'),
+      icon: 'bi-grid-3x3-gap',
+      disabled: !booking.changeSeatEligible,
+      reasonText: booking.changeSeatEligible
+        ? undefined
+        : this.translate.instant(booking.changeSeatReasonKey ?? ''),
+      command: () => this.onChangeSeat(booking),
+    });
+
+    items.push({
+      label: this.translate.instant('MY_BOOKINGS.CHANGE_STOP.ACTION'),
+      icon: 'bi-geo-alt',
+      disabled: !booking.changeStopEligible,
+      reasonText: booking.changeStopEligible
+        ? undefined
+        : this.translate.instant(booking.changeStopReasonKey ?? ''),
+      command: () => this.onChangeStop(booking),
+    });
+
+    if (booking.cancellable) {
+      items.push({
+        label: this.translate.instant('MY_BOOKINGS.CANCEL.ACTION'),
+        icon: 'bi-x-circle',
+        danger: true,
+        disabled: cancellingBookingId !== null,
+        submitting: cancellingBookingId === booking.id,
+        command: () => this.onCancel(booking),
+      });
+    }
+
+    this.actionMenuItems = items;
+    this.lastActionMenuTrigger = event.currentTarget as HTMLButtonElement;
+    this.actionMenu.toggle(event);
+  }
+
+  /** Restores focus to the trigger button that opened the menu — same
+   * pattern as `WalkInTripBrowserComponent.onTripMenuHide`. */
+  onActionMenuHide(): void {
+    this.lastActionMenuTrigger?.focus();
+    this.lastActionMenuTrigger = null;
+  }
+
+  /** Opens the reschedule dialog optimistically — the dialog itself owns its
+   * own background data loads (design-system §6: modals open optimistically,
+   * never gated on an awaited fetch). */
+  onReschedule(booking: MyBookingView): void {
+    if (!booking.rescheduleEligible) {
+      return;
+    }
+    this.store.dispatch(openRescheduleDialog({ bookingId: booking.id }));
+  }
+
+  onRescheduleDialogClosed(): void {
+    this.store.dispatch(closeRescheduleDialog());
+  }
+
+  /** Opens the change-seat dialog optimistically — the dialog itself owns
+   * its own background data loads (design-system §6). */
+  onChangeSeat(booking: MyBookingView): void {
+    if (!booking.changeSeatEligible) {
+      return;
+    }
+    this.store.dispatch(openChangeSeatDialog({ bookingId: booking.id }));
+  }
+
+  onChangeSeatDialogClosed(): void {
+    this.store.dispatch(closeChangeSeatDialog());
+  }
+
+  /** Opens the change-stop dialog optimistically — the dialog itself owns
+   * its own background data loads (design-system §6). */
+  onChangeStop(booking: MyBookingView): void {
+    if (!booking.changeStopEligible) {
+      return;
+    }
+    this.store.dispatch(openChangeStopDialog({ bookingId: booking.id }));
+  }
+
+  onChangeStopDialogClosed(): void {
+    this.store.dispatch(closeChangeStopDialog());
   }
 
   /** Open the e-ticket modal for a paid booking. */
@@ -150,6 +326,9 @@ export class MyBookingsComponent implements OnInit {
 
     const statusCode = normalizeStatusCode(booking.status);
     const totalAmount = toAmountNumber(booking.totalAmount);
+    const rescheduleEligibility = this.computeRescheduleEligibility(booking, statusCode, schedules);
+    const changeSeatEligibility = this.computeChangeSeatEligibility(booking, statusCode, schedules);
+    const changeStopEligibility = this.computeChangeStopEligibility(booking, statusCode, schedules);
 
     return {
       id: booking.id,
@@ -157,30 +336,121 @@ export class MyBookingsComponent implements OnInit {
       statusCode,
       bookingType: normalizeStatusCode(booking.bookingType) || 'one_way',
       route,
-      departureLabel: this.formatDateTime(firstLeg?.departureDateTime, locale),
+      departureLabel: formatDisplayDateTime(firstLeg?.departureDateTime, locale),
       passengerCount: firstLeg?.tickets?.length ?? 0,
       totalAmount,
       totalAmountLabel: this.formatCurrency(totalAmount),
-      createdLabel: this.formatDateTime(booking.createdAt, locale),
+      createdLabel: formatDisplayDateTime(booking.createdAt, locale),
       cancellable: statusCode === CANCELLABLE_BOOKING_STATUS,
       paid: statusCode === CANCELLABLE_BOOKING_STATUS,
+      rescheduleEligible: rescheduleEligibility.eligible,
+      rescheduleReasonKey: rescheduleEligibility.reasonKey,
+      changeSeatEligible: changeSeatEligibility.eligible,
+      changeSeatReasonKey: changeSeatEligibility.reasonKey,
+      changeStopEligible: changeStopEligibility.eligible,
+      changeStopReasonKey: changeStopEligibility.reasonKey,
     };
   }
 
-  private formatDateTime(
-    value: string | undefined,
-    locale: SupportedLocale
-  ): string {
-    if (!value) {
-      return '-';
+  /**
+   * Mirrors the backend's reschedule prerequisites (see
+   * OBRS-backend/docs/api/booking.md) so the card never presents Reschedule
+   * as available when the server would reject it (acceptance criterion #3).
+   * First failing check wins; the server remains the final authority.
+   */
+  private computeRescheduleEligibility(
+    booking: MyBookingDto,
+    statusCode: string,
+    schedules: MyBookingDto['bookingSchedules']
+  ): RescheduleEligibility {
+    if (statusCode !== CANCELLABLE_BOOKING_STATUS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.RESCHEDULE.REASON.NOT_CONFIRMED' };
     }
-    const date = dayjs(value);
-    if (!date.isValid()) {
-      return '-';
+
+    const bookingType = normalizeStatusCode(booking.bookingType) || 'one_way';
+    if (bookingType !== 'one_way' || (schedules?.length ?? 0) !== 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.RESCHEDULE.REASON.NOT_ONE_WAY' };
     }
-    const month = this.monthLabels[locale][date.month()];
-    return `${date.date()} ${month} ${date.year()} • ${date.format('HH:mm')}`;
+
+    if (Number(booking.rescheduleCount ?? 0) >= 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.RESCHEDULE.REASON.ALREADY_USED' };
+    }
+
+    const departure = dayjs(schedules?.[0]?.departureDateTime);
+    if (!departure.isValid() || departure.diff(dayjs(), 'hour', true) <= RESCHEDULE_WINDOW_HOURS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.RESCHEDULE.REASON.NO_WINDOW' };
+    }
+
+    return { eligible: true, reasonKey: null };
   }
+
+  /**
+   * Mirrors the backend's change-seat prerequisites (OBRS-110; see
+   * OBRS-backend/docs/api/booking.md) so the card never presents Change seat
+   * as available when the server would reject it. First failing check wins;
+   * the server remains the final authority. Unlike reschedule, there is no
+   * 30-day/TOO_FAR check — change-seat only cares about the 4h window.
+   */
+  private computeChangeSeatEligibility(
+    booking: MyBookingDto,
+    statusCode: string,
+    schedules: MyBookingDto['bookingSchedules']
+  ): ChangeSeatEligibility {
+    if (statusCode !== CANCELLABLE_BOOKING_STATUS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_SEAT.REASON.NOT_CONFIRMED' };
+    }
+
+    const bookingType = normalizeStatusCode(booking.bookingType) || 'one_way';
+    if (bookingType !== 'one_way' || (schedules?.length ?? 0) !== 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_SEAT.REASON.NOT_ONE_WAY' };
+    }
+
+    if (Number(booking.seatChangeCount ?? 0) >= 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_SEAT.REASON.ALREADY_USED' };
+    }
+
+    const departure = dayjs(schedules?.[0]?.departureDateTime);
+    if (!departure.isValid() || departure.diff(dayjs(), 'hour', true) <= CHANGE_SEAT_WINDOW_HOURS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_SEAT.REASON.NO_WINDOW' };
+    }
+
+    return { eligible: true, reasonKey: null };
+  }
+
+  /**
+   * Mirrors the backend's change-stop prerequisites (OBRS-110 wave 2; see
+   * OBRS-backend/docs/api/booking.md) so the card never presents Change stop
+   * as available when the server would reject it. First failing check wins;
+   * the server remains the final authority. Like change-seat (and unlike
+   * reschedule), there is no 30-day/TOO_FAR check — change-stop doesn't move
+   * the departure date, only the pickup/drop-off stops.
+   */
+  private computeChangeStopEligibility(
+    booking: MyBookingDto,
+    statusCode: string,
+    schedules: MyBookingDto['bookingSchedules']
+  ): ChangeStopEligibility {
+    if (statusCode !== CANCELLABLE_BOOKING_STATUS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_STOP.REASON.NOT_CONFIRMED' };
+    }
+
+    const bookingType = normalizeStatusCode(booking.bookingType) || 'one_way';
+    if (bookingType !== 'one_way' || (schedules?.length ?? 0) !== 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_STOP.REASON.NOT_ONE_WAY' };
+    }
+
+    if (Number(booking.stopChangeCount ?? 0) >= 1) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_STOP.REASON.ALREADY_USED' };
+    }
+
+    const departure = dayjs(schedules?.[0]?.departureDateTime);
+    if (!departure.isValid() || departure.diff(dayjs(), 'hour', true) <= CHANGE_STOP_WINDOW_HOURS) {
+      return { eligible: false, reasonKey: 'MY_BOOKINGS.CHANGE_STOP.REASON.NO_WINDOW' };
+    }
+
+    return { eligible: true, reasonKey: null };
+  }
+
 
   private formatCurrency(value: number): string {
     return new Intl.NumberFormat('th-TH', {

@@ -1,73 +1,76 @@
 @import "../../../styles/variables.scss";
 
+// Centered auth-card layout (Atlassian-style): a single card floating on a soft
+// brand gradient, so the whole form (incl. Google sign-in) fits a laptop
+// viewport without the old 60/40 split pushing options below the fold.
 .login-container {
+  position: relative;
   display: flex;
-  width: 100%;
-  height: 100vh;
-  padding: 20px;
-  margin: auto;
-  background: $primary-white;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: $space-sm;
+  // Clip the blurred/scaled brand backdrop to the viewport. The language
+  // dropdown opens downward inside the card, well within these bounds, so it
+  // is not affected.
+  overflow: hidden;
+  background: linear-gradient(160deg, $primary-lightblue 0%, $primary-white 60%);
+
+  // AMBIENT BRAND BACKDROP — the bus-station illustration, blurred and anchored
+  // to the bottom, fading out toward the top. Reads as a soft brand "ground"
+  // under the card without the detailed scene (TICKETS sign, figures) competing
+  // for attention. Decorative only. scale() pushes the blur halo off-screen so
+  // no transparent edge shows.
+  .login-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: bottom;
+    opacity: 0.22;
+    filter: blur(4px);
+    transform: scale(1.06);
+    -webkit-mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 78%);
+    mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 78%);
+    pointer-events: none;
+    z-index: 0;
+  }
 
   // CHANGE LANGUAGE SWITCH + THEME TOGGLE — wraps shared components
   .change-language {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: $space-2xs;
   }
 
-  // LEFT SECTION
-  .left-section {
-    width: 60%;
-
-    .bg-img {
-      width: 100%;
-      height: 100%;
-      border-radius: 24px;
-      object-fit: cover;
-    }
-  }
-
-  // RIGHT SECTION
-  .right-section {
+  // CENTERED AUTH CARD
+  .login-card {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
-    flex: 1;
-    width: 40%;
-    padding-left: 80px;
-    padding-right: 80px;
-
-    .language-switch {
-      display: flex;
-      justify-content: flex-end;
-      width: 100%;
-
-      span {
-        margin-right: 10px;
-        font-size: 16px;
-        color: $text-black;
-      }
-    }
+    width: 100%;
+    max-width: 440px;
+    padding: $space-md $space-2xl;
+    background: $primary-white;
+    border-radius: $radius-lg;
+    box-shadow: $shadow-lg;
 
     .logo-section {
       display: flex;
       justify-content: center;
 
       .logo-img {
-        width: 200px;
-        height: 87px;
+        width: 130px;
+        height: 56px;
       }
     }
 
     .welcome-text {
       text-align: center;
-      font-size: 28px;
-      color: $text-black;
-    }
-
-    .hint-text {
-      text-align: center;
-      font-size: 18px;
+      font-size: 22px;
       color: $text-black;
     }
 
@@ -80,10 +83,10 @@
     .login-form {
       .login-btn {
         width: 100%;
-        padding: 12px;
+        padding: $space-2xs $space-xs;
         border: none;
-        border-radius: 24px;
-        font-size: 16px;
+        border-radius: $radius-xl;
+        font-size: $font-size-base;
         font-weight: bold;
         cursor: pointer;
         background-color: $primary-blue;
@@ -92,10 +95,10 @@
 
       .login-by-phone-no-btn {
         width: 100%;
-        padding: 12px;
-        border: 1px solid #3c9bc6;
-        border-radius: 24px;
-        font-size: 16px;
+        padding: $space-2xs $space-xs;
+        border: 1px solid $text-blue;
+        border-radius: $radius-xl;
+        font-size: $font-size-base;
         font-weight: bold;
         cursor: pointer;
         background-color: #f6fcff;
@@ -114,7 +117,7 @@
 
       .register-link {
         text-align: center;
-        font-size: 16px;
+        font-size: $font-size-base;
         color: $text-black;
 
         a {
@@ -130,49 +133,30 @@
         display: flex;
         align-items: center;
       }
+
+      // PDPA consent (legal, required) — kept but made compact so the whole
+      // form still fits a laptop viewport. The Thai copy is trimmed to wrap to
+      // 2 lines like EN/ZH, so the card is the same height in every language
+      // (no reserved dead space, no resize/jump on language switch).
+      .form-check-label {
+        font-size: $font-size-sm;
+        line-height: $line-height-tight;
+      }
     }
-  }
-}
-
-@media (max-width: 992px) {
-  .login-container {
-    flex-direction: column;
-    align-items: stretch;
-    height: auto;
-    padding: 16px;
-    gap: 24px;
-  }
-
-  .login-container .left-section {
-    width: 100%;
-
-    .bg-img {
-      height: 240px;
-      object-fit: cover;
-    }
-  }
-
-  .login-container .right-section {
-    width: 100%;
-    padding: 0 16px 24px;
-  }
-
-  .login-container .change-language {
-    justify-content: flex-start;
   }
 }
 
 @media (max-width: 576px) {
   .login-container {
-    padding: 12px;
-  }
+    padding: $space-sm;
 
-  .login-container .right-section {
-    padding: 0 8px 20px;
-  }
+    .login-card {
+      padding: $space-lg $space-md $space-md;
+    }
 
-  .login-container .logo-section .logo-img {
-    width: 160px;
-    height: auto;
+    .login-card .logo-section .logo-img {
+      width: 150px;
+      height: auto;
+    }
   }
 }

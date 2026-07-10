@@ -56,7 +56,9 @@
         <ng-container *ngIf="!isLoading">
           <tr
             *ngFor="let report of filteredReports; let i = index; trackBy: trackById"
+            class="ur-report-row"
             [class.zebra]="i % 2 === 1"
+            (click)="onRowActivate(report.id, $event)"
           >
             <td class="admin-emphasis">{{ report.id }}</td>
             <td>{{ categoryLabel(report.category) }}</td>
@@ -77,7 +79,7 @@
             </td>
             <td class="ur-description-cell">{{ report.descriptionPreview }}</td>
             <td>{{ report.imageCount }}</td>
-            <td>{{ report.createdAt }}</td>
+            <td>{{ displayDateTime(report.createdAt) }}</td>
             <td>
               <button
                 type="button"
@@ -110,25 +112,22 @@
   class="admin-modal-backdrop"
   *ngIf="selectedReportId !== null"
   adminModalBackdrop
-  (dismiss)="closeDetail()"
+  (dismiss)="onDetailBackdropDismiss()"
 >
   <div class="admin-modal ur-detail-modal">
     <div class="admin-modal-header">
       <h4 class="admin-modal-title">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.TITLE' | translate }}</h4>
       <button
         type="button"
-        class="admin-btn"
+        class="ur-detail-close"
+        [attr.aria-label]="'ADMIN.USABILITY_REPORTS.DETAIL.CLOSE' | translate"
         (click)="closeDetail()"
       >
-        {{ 'ADMIN.USABILITY_REPORTS.DETAIL.CLOSE' | translate }}
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
       </button>
     </div>
 
-    <div *ngIf="isDetailLoading" class="ur-detail-loading">
-      <p class="admin-muted">{{ 'ADMIN.COMMON.LOADING' | translate }}</p>
-    </div>
-
-    <ng-container *ngIf="!isDetailLoading && detailReport">
+    <ng-container *ngIf="detailReport">
       <div class="ur-detail-body">
         <!-- Meta fields -->
         <div class="ur-detail-row">
@@ -146,30 +145,65 @@
             {{ 'ADMIN.USABILITY_REPORTS.DETAIL.ANONYMOUS' | translate }}
           </span>
         </div>
+        <div class="ur-detail-row" *ngIf="detailReport.reporterEmail">
+          <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.REPORTER_EMAIL' | translate }}</span>
+          <span>{{ detailReport.reporterEmail }}</span>
+        </div>
+        <div class="ur-detail-row" *ngIf="detailReport.reporterNotifiedAt">
+          <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.REPORTER_NOTIFIED' | translate }}</span>
+          <span class="ur-notified-pill">
+            <span class="ur-notified-check" aria-hidden="true">✓</span>
+            {{ displayDateTime(detailReport.reporterNotifiedAt) }}
+          </span>
+        </div>
         <div class="ur-detail-row">
           <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.COL.CREATED_AT' | translate }}</span>
-          <span>{{ detailReport.createdAt }}</span>
+          <span>{{ displayDateTime(detailReport.createdAt) }}</span>
         </div>
         <div class="ur-detail-row">
           <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.USER_AGENT' | translate }}</span>
-          <span class="ur-user-agent">{{ detailReport.userAgent }}</span>
+          <span class="ur-user-agent">
+            {{ detailReport.userAgent }}
+            <span *ngIf="isDetailFetching" class="ur-inline-updating">
+              {{ 'ADMIN.COMMON.UPDATING' | translate }}
+            </span>
+          </span>
         </div>
 
         <!-- Description -->
         <div class="ur-detail-description mt-3">
-          <p class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.COL.DESCRIPTION' | translate }}</p>
+          <p class="ur-detail-label">
+            {{ 'ADMIN.USABILITY_REPORTS.COL.DESCRIPTION' | translate }}
+            <span *ngIf="isDetailFetching" class="ur-inline-updating">
+              {{ 'ADMIN.COMMON.UPDATING' | translate }}
+            </span>
+          </p>
           <p class="ur-description-text">{{ detailReport.description }}</p>
         </div>
 
         <!-- Images -->
         <div class="mt-3">
-          <p class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.COL.IMAGES' | translate }}</p>
-          <p *ngIf="detailReport.images.length === 0" class="admin-muted">
+          <p class="ur-detail-label">
+            {{ 'ADMIN.USABILITY_REPORTS.COL.IMAGES' | translate }}
+            <span *ngIf="isDetailFetching" class="ur-inline-updating">
+              {{ 'ADMIN.COMMON.UPDATING' | translate }}
+            </span>
+          </p>
+          <p *ngIf="!isDetailFetching && detailReport.images.length === 0" class="admin-muted">
             {{ 'ADMIN.USABILITY_REPORTS.DETAIL.NO_IMAGES' | translate }}
           </p>
           <div *ngIf="detailReport.images.length > 0" class="ur-images-grid">
             <div *ngFor="let img of detailReport.images" class="ur-image-item">
-              <img [src]="img.publicUrl" [alt]="'Image ' + img.position" class="ur-image-thumb" />
+              <img
+                [src]="img.publicUrl"
+                [alt]="'Image ' + img.position"
+                class="ur-image-thumb"
+                role="button"
+                tabindex="0"
+                [attr.aria-label]="'ADMIN.USABILITY_REPORTS.DETAIL.IMAGE_ENLARGE' | translate:{ position: img.position }"
+                (click)="openLightbox(img.publicUrl)"
+                (keydown)="onThumbnailKeydown($event, img.publicUrl)"
+              />
               <div class="ur-image-meta">
                 <span>
                   {{ 'ADMIN.USABILITY_REPORTS.DETAIL.IMAGE_POSITION' | translate }}:
@@ -182,6 +216,43 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div class="ur-detail-row" *ngIf="detailReport.triagedBy !== null && detailReport.triagedBy !== undefined">
+          <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.TRIAGED_BY' | translate }}</span>
+          <span>{{ detailReport.triagedByName || detailReport.triagedBy }}</span>
+        </div>
+        <div class="ur-detail-row" *ngIf="detailReport.triagedAt">
+          <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.TRIAGED_AT' | translate }}</span>
+          <span>{{ displayDateTime(detailReport.triagedAt) }}</span>
+        </div>
+        <div class="ur-detail-row" *ngIf="detailReport.jiraIssueKey">
+          <span class="ur-detail-label">{{ 'ADMIN.USABILITY_REPORTS.DETAIL.JIRA_LINK_LABEL' | translate }}</span>
+          <a
+            class="btn btn-link p-0"
+            [href]="jiraIssueUrl(detailReport.jiraIssueKey)"
+            target="_blank"
+            rel="noopener noreferrer"
+            [attr.aria-label]="'ADMIN.USABILITY_REPORTS.DETAIL.JIRA_LINK_ARIA' | translate:{ key: detailReport.jiraIssueKey }"
+          >
+            {{ detailReport.jiraIssueKey }}
+            <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+          </a>
+        </div>
+
+        <!-- Triage note -->
+        <div class="admin-form-field mt-3">
+          <label class="admin-form-label" for="ur-triage-note">
+            {{ 'ADMIN.USABILITY_REPORTS.DETAIL.TRIAGE_NOTE_LABEL' | translate }}
+          </label>
+          <textarea
+            id="ur-triage-note"
+            class="admin-field"
+            rows="3"
+            [ngModel]="selectedTriageNote"
+            (ngModelChange)="onTriageNoteChange($event)"
+            [placeholder]="'ADMIN.USABILITY_REPORTS.DETAIL.TRIAGE_NOTE_PLACEHOLDER' | translate"
+          ></textarea>
         </div>
 
         <!-- Status update -->
@@ -208,5 +279,22 @@
         </div>
       </div>
     </ng-container>
+  </div>
+
+  <!-- Lightbox — a separate overlay layer above the detail modal. -->
+  <div
+    class="admin-modal-backdrop ur-lightbox-backdrop"
+    *ngIf="lightboxImageUrl"
+    (click)="onLightboxBackdropClick($event)"
+  >
+    <button
+      type="button"
+      class="ur-lightbox-close"
+      [attr.aria-label]="'ADMIN.COMMON.CLOSE' | translate"
+      (click)="closeLightbox()"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">close</span>
+    </button>
+    <img [src]="lightboxImageUrl" alt="" class="ur-lightbox-image" />
   </div>
 </div>

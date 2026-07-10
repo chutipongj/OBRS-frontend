@@ -1,43 +1,725 @@
 # Agent Memory — Scrutinize notes for developers
 
-## 2026-07-01 — Frontend: confirm-guidance-flow (OBRS-73) (SELF-FIXED)
+## 2026-07-10 — QA re-verify: OBRS-129 PASSED — data path confirmed end-to-end at backend `70ff182`
 
-**Worktree:** `OBRS-frontend-wt-confirm-guidance-flow` (diff vs `origin/dev`)
+Backend fix (`70ff182`, Instant→OffsetDateTime projection conversion) rebuilt locally on the same
+:8000/:4407 setup as the earlier FAILED pass. Re-checked only what the 500 had blocked; role
+matrix / error-state handling were already proven and not re-run.
 
-**Finding (self-fixed) — `jasmine.clock()` uninstall could leak on throw.**
-The new happy-path test in `home.component.spec.ts` called
-`jasmine.clock().install()` then `uninstall()` inline at the end of the `it`.
-Jasmine's clock is a *global* mock shared across every spec file in a Karma run.
-Failed `expect()`s don't throw (so those were safe), but any real exception
-between install and the inline uninstall (e.g. a future refactor making
-`onPickupDropoffConfirmed` throw, or `tick` erroring) would skip uninstall and
-leak the fake clock into later spec files — where the next `install()` throws
-"clock already installed" and cascades unrelated failures. **Fix:** wrapped the
-body in `try { … } finally { jasmine.clock().uninstall() }` so cleanup is
-guaranteed. **Lesson:** any inline `jasmine.clock().install()` must pair its
-`uninstall()` with `finally` (or an `afterEach`), never a trailing statement.
+**AC1 (tile parity, FE render):** confirmed. Tiles read `1 / 28.6% / 4 / THB 800.00`, matching
+the API response and `/reports/summary` byte-for-byte. Same for `owner@system.local`.
 
-**Confirmed safe (no action needed):**
-- All 3 `onConfirm()` branches (neither / pickup-missing / dropoff-missing) call
-  `alertService.toast(msg, 'warning')` — icon explicitly overrides the method's
-  `'info'` default. Tab-switch + early-return logic is byte-for-byte unchanged
-  (`activeTabIndex = 0`; `= isDesktop ? 1 : 2`).
-- `onSearch()` removal is correctly scoped to the *caller*
-  (`home.component.onPickupDropoffConfirmed`); `HomeBookingComponent.onSearch()`
-  and its `(click)="onSearch()"` button binding are untouched and still reachable.
-- Error branch still fires `alertService.error(SHARED.ERROR_GENERAL)` when a slug
-  doesn't resolve. No new i18n keys added.
-- `scrollIntoView` guarded with optional chaining + `setTimeout` (runs after CD
-  applies the prefilled values). Safe.
+**AC2 (departures table):** 1 row rendered — `ชลบุรี-กรุงเทพฯ` (Chonburi-Bangkok, th label found;
+falls back to the English route slug correctly when zh has no translation row — confirmed in the
+zh screenshot, not a bug), `10 ก.ค. 2026 15:00` (via `formatDisplayDateTime`, OBRS-178 formatter —
+NOT the raw `2026-07-10T15:00:00+07:00` ISO string), `4 / 14`, `28.6%`. `tiles.departuresCount(1)
+== 1` row. Per-row occupancy (28.6%) consistent with the tile (only one row, so trivially
+sum-equal — matches the backend-side sum-based math already verified).
 
-**Non-blocking note (left for developer, not fixed):**
-- `HomeBookingComponent.isPassengerSelected` getter is now dead production code —
-  its only former caller (the removed passenger guard) is gone; only a unit test
-  still references it. Harmless, but a candidate for a future cleanup PR.
-- `AlertService.toast()` does not reset `isLoadingVisible = false` like the other
-  methods. Irrelevant to this flow (no loading spinner during map-confirm), but be
-  aware: SweetAlert2 shows one popup at a time, so firing a toast while a blocking
-  loading modal is open would replace/close it. Out of scope here.
+**AC3 dark-mode DOM probe on the now-reachable DATA surfaces:** `.admin-kpi` computed
+`background-color: rgb(29, 34, 38)`, `.admin-table` / table rows `rgba(0,0,0,0)` (transparent,
+inherits the dark card background, same shape as the light-mode empty-state card already
+checked) — none near-white, no light bleed on any of the newly-reachable surfaces.
+
+**AC4 (basis captions + i18n, no raw-key leak):** confirmed live for en/th/zh (cold `app_language`
+localStorage switch + reload) — captions render "by departure date"/"by booking date" (localized:
+"ตามวันที่ออกเดินทาง"/"ตามวันที่จอง" in th, "按发车日期"/"按预订日期" in zh) under the correct tiles;
+`/ADMIN\.DASHBOARD\./` regex found zero raw-key leaks in the rendered body in any of the 3
+languages.
+
+**AC5 (View full reports link):** `.admin-card-head a.admin-btn-small` → `href="/admin/reports"`,
+click navigates to `/admin/reports`. (First attempt used an over-broad `hasText: /report/i`
+Playwright locator that matched the sidebar's "Usability Reports" nav item instead — a test-script
+bug, not a product bug; re-verified with the scoped selector above and it's correct.)
+
+**AC6 (empty state):** not re-forced — today (2026-07-10) has 1 real departure, so the empty
+branch isn't reachable live. Already confirmed via `dashboard-page.component.spec.ts`'s
+`isEmptyDay`/`contentState` unit tests (`'empty' when departuresCount===0 && bookingCount===0 &&
+occupancyRatePct===0`) plus the static template review — no change since the prior FAILED pass.
+
+Fresh screenshots (light/dark, en default; th/zh; owner spot-check) captured after polling for a
+real (non-skeleton) tile + a real table row — see QA's transcript for the scratchpad paths.
+Verdict: **PASSED**. No frontend changes needed; the prior FAILED pass's frontend-side conclusions
+(graceful error handling, correct i18n plumbing) already held and are now moot since the backend
+supplies 200s.
+
+## 2026-07-10 — QA: OBRS-129 FAILED (blocked on a backend 500, not a frontend bug)
+
+**Verdict: FAILED**, blocking bug is backend-side (see backend worktree's `AGENT_MEMORY.md` for
+the full root cause: `GET /api/private/admin/dashboard/today` 500s via an `Instant→OffsetDateTime`
+native-query projection error whenever any departure exists on the given day — i.e. on every real
+day, not just an edge case). Live-verified against local FE (:4407) + local backend (:8000, `sit`
+profile / real SIT DB) as `admin@system.local`.
+
+**What this DID confirm about the frontend's own code (all good):**
+- `dashboard-page.component.html`'s `contentState === 'error'` branch degrades gracefully — no JS
+  crash, no console pageerror, a clean centered message replaces the tiles+table entirely, exactly
+  per the `dashboard-state-card` design intent (screenshot evidence: `dashboard-light.png` /
+  `dashboard-dark.png` in QA's scratchpad, see the QA agent's transcript for paths).
+- The error message is correctly localized (`ADMIN.DASHBOARD.LOAD_FAILED` rendered as
+  "ไม่สามารถโหลดข้อมูลแดชบอร์ดได้" in Thai, no raw key leaked) — the admin account's
+  `preferredLocale` defaulted the UI to Thai on this run.
+- Dark mode probe on the one reachable new surface (`.dashboard-state-card`): computed
+  `background-color: rgb(29, 34, 38)`, `color: rgb(231, 237, 241)` — dark, no light-bleed.
+- Role gate (AC3) verified at the API level: ADMIN/OWNER reach the guarded route (get 500, not
+  403 — i.e. auth passes, only the data path is broken); SALESPERSON/DRIVER/CUSTOMER get 403,
+  anon gets 401.
+
+**What could NOT be verified this pass (all downstream of the backend bug, nothing here implies a
+frontend defect):** tile-parity rendering (AC1), departures table rendering + occupancy column
+(AC2), the empty-state note replacing the table (AC5) — never reached because "today" has real
+departures and the endpoint always 500s on that path, `.dashboard-basis-caption`/`.admin-kpi`/
+`.admin-table` dark-mode probe (never rendered), the "View full reports" link (AC7 — its wrapping
+`<section>` is `*ngIf="contentState !== 'error'"`, so it doesn't render in the error state either),
+tile-level i18n (en/zh switch of tile labels/captions never got past the error state to check).
+
+Re-run this worktree's own capture/regression once the backend fix lands — nothing here needs
+frontend changes.
+
+## 2026-07-10 — Frontend implementation: `/admin/dashboard` rebuild-in-place (OBRS-129)
+
+**Worktree:** `OBRS-frontend-wt-starter-dashboards` (branch `ao/starter-dashboards`, off
+`origin/dev` which already has OBRS-40). `ng test`: 996/996 PASS. `ng build --configuration
+production`: PASS (1.45 MB initial, under the 1.5 MB budget). `npx tsc --noEmit -p
+tsconfig.app.json`: clean.
+
+**Rebuild-in-place, not a new page.** Kept the route (`/admin/dashboard`), sidebar nav item,
+topbar title mechanism (`data.titleKey: 'ADMIN.PAGES.DASHBOARD'`, `subtitleKey:
+'ADMIN.DASHBOARD.SUBTITLE'` — no in-body `<h3>`), and `pollWhileVisible` auto-refresh
+untouched. Only `AdminDashboardStore`'s internals and the page's rendering changed.
+
+**`AdminDashboardStore` re-based onto `AdminCollectionStore<DashboardTodayDto>`, deleting the
+old bespoke two-source (`getBookings()` + `getVehicles()`) merge entirely** — same move
+`ReportsStore` made for OBRS-40. `fetch()` is one `firstValueFrom(adminApiService
+.getDashboardToday())` call; `emptySnapshot()` covers the no-`data` edge. See
+`docs/adr/0013-dashboard-rebase-on-admin-collection-store.md` for the full rationale
+(business logic — pending-payment/active-vehicle detection, revenue summation — now lives
+server-side in the new endpoint instead of being re-derived client-side).
+
+**Backend endpoint does not exist yet — built directly against the contract supplied in the
+locked task spec (mirrors `ReportsSummaryDto`'s shape convention), flagged in
+`docs/handoff.md`.** Checked the paired backend worktree
+(`OBRS-backend-wt-starter-dashboards`): `IMPLEMENTATION_CHECKLIST.md` shows `#44` (OBRS-129)
+"claimed"/in-progress but no `Dashboard*` controller/service exists yet, only planning-doc
+commits. `../OBRS-backend/docs/api/` has no `dashboard.md`. Filed a Contract Request per
+`CLAUDE.md`'s R0/R1 rule — every load will show `ADMIN.DASHBOARD.LOAD_FAILED` until the
+backend ships `GET /api/private/admin/dashboard/today`.
+
+**`contentState` has one fewer branch than `ReportsPageComponent`'s.** No date picker on this
+page (the endpoint is always "today" in Bangkok time), so no `'invalid'` state —
+`'loading' | 'error' | 'empty' | 'data'` only. `isEmptyDay` carries forward the OBRS-40
+`e41e88e` divergent-basis reasoning (occupancy keys on departure-date, `bookingCount` keys on
+booking-date, so a day can have real occupancy with zero bookings and that is NOT empty) —
+renamed for this page but same logic shape as `isEmptyRange`.
+
+**Revenue tile gates on `showRevenue = !!tiles?.revenue` (presence), never a role check** —
+same forward-compat pattern as Reports, now literally realized: the interface comment on
+`DashboardTilesDto.revenue` says this is for "a future viewer (e.g. salesperson) without
+revenue visibility," which is exactly what OBRS-129's own deferred salesperson-access scope
+describes.
+
+**Split `loadError` (gated on `!store.hasValue`, drives the full-replace error card) from a
+new raw `hasFailed` flag (ungated, drives `app-admin-refresh-hint`'s "failed, showing saved
+data" line) — Reports doesn't need this split because it hardcodes `[failed]="false"` on its
+refresh-hint and has no such requirement.** The task spec explicitly asked for
+`app-admin-refresh-hint` to cover "background-refresh/failed-with-cache," which needs to fire
+precisely when there **is** a cache (the opposite gating condition from the error card). The
+outer `<section class="admin-page-intro">`'s `*ngIf` combines
+`(contentState === 'data' || contentState === 'empty') && (isRefreshing || hasFailed)` so the
+hint only ever appears over an already-rendered tiles/table view, never doubled up with the
+error-state-card.
+
+**Test gotcha: a naive `dedupes concurrent refreshes ... toHaveBeenCalledTimes(1)` assertion
+is WRONG for `AdminCollectionStore` subclasses when the fetch resolves via `firstValueFrom(of(...))`.**
+`AdminCollectionStore.refresh()`'s actual contract (see its own doc comment) is "a call that
+arrives mid-flight requests one more fetch when the current one finishes" — with an
+already-resolved-but-microtask-deferred observable, both the initial fetch AND the
+one-rerun fire before `Promise.all([first, second])` settles, so the spy legitimately gets
+called twice. Verified via a throwaway Node repro (`rxjs`'s `firstValueFrom(of(x))` still
+defers the `await` continuation to a microtask, same as any promise). Rewrote the test to
+assert the store resolves cleanly + `hasValue` afterward, not a specific call count — the
+exact rerun-count contract is already covered in detail by the base class's own
+`admin-collection-store.spec.ts` (using a manually-controlled `deferred<T>()` to actually hold
+a fetch "in flight" across the assertion, which `of()` cannot model).
+
+**i18n:** added `ADMIN.DASHBOARD.{TILE.*, BASIS.*, DEPARTURES.*, VIEW_FULL_REPORTS}` (12 keys)
+to en/th/zh, changed `SUBTITLE`, deleted the now-dead flat keys
+(`TOTAL_BOOKINGS`/`PENDING_PAYMENTS`/`ACTIVE_VEHICLES`/`REVENUE`/`RECENT_BOOKINGS`/`VIEW_ALL`/
+`PARTIAL_LOAD_FAILED`/`UPDATING`) after grep-confirming none were referenced outside the
+dashboard files being rewritten. Kept `LOAD_FAILED` (reused) and `TITLE` (not in the
+task's deletion list, left as harmless unused weight rather than guessing it's safe to
+remove).
+
+**Docs:** `README.md` "Admin UI Conventions" gained a "Dashboard (`/admin/dashboard`)"
+section (mirrors the existing "Reports" section's structure/tone) explicitly noting this is
+now the **second** `.admin-card.admin-kpi` tile-markup consumer the Reports section already
+predicted, and that extraction into a shared stat-tile component was deliberately NOT done
+here (tracked as debt, out of scope for a task with a fully prescribed file list).
+`docs/handoff.md` got a new Contract Request entry (2026-07-10); `docs/adr/0013-...md` covers
+the store-rebase decision.
+## 2026-07-10 — Frontend implementation: digital e-ticket QR + manual boarding-scan (OBRS-96)
+
+**Worktree:** `OBRS-frontend-wt-obrs-96-eticket-qr` (branch `ao/obrs-96-eticket-qr`, off
+`dev`). `ng test`: 1020/1020 PASS. `ng build --configuration production`: PASS (1.47 MB
+initial, under the 1.5 MB budget).
+
+**Backend does not exist yet for either endpoint — built against the SA/UX-locked shape,
+flagged in `docs/handoff.md`, same pattern as OBRS-109/OBRS-85.** Checked the paired backend
+worktree `OBRS-backend-wt-obrs-96-eticket-qr` (same branch name): `git diff dev --stat` shows
+only `AGENT_MEMORY.md` + unrelated fixture fixes, no boarding-token/boarding-scan
+controller/service/DTO. `IMPLEMENTATION_CHECKLIST.md` confirms `[#52] OBRS-96` is still
+🔒 WIP. Filed a Contract Request in `docs/handoff.md` covering both
+`GET /api/private/tickets/{id}/boarding-token` and `POST /api/private/tickets/boarding-scan`.
+Until the backend lands: every ticket's e-ticket QR shows the `qrUnavailable` placeholder
+(404 on every `boarding-token` GET), and the boarding-scan box always shows the `GENERIC`
+error — both degrade gracefully, no broken UI.
+
+**Per-ticket QR state lives OUTSIDE the transient `passengers` array — this is the one
+non-obvious design point.** `ETicketComponent.mapTicketFields`/`applyApiOverrides` already
+re-ran on every `combineLatest` emission before this feature, including a bare locale switch
+(`translateService.onLangChange`). If the resolved `qrDataUrl`/`qrUnavailable` lived only on
+the `TicketPassenger` row objects, a language toggle would rebuild the array from scratch and
+either blank already-fetched QR codes or re-trigger duplicate `boarding-token` GETs per
+ticket. Fixed via two component-level, `ticketId`-keyed structures independent of the
+`passengers` array's lifetime: `qrStateByTicketId: Map<number,{qrDataUrl,qrUnavailable}>` and
+`fetchedTicketIds: Set<number>`. See `docs/adr/0013-per-ticket-qr-eticket-and-boarding-scan.md`
+Decision 3 for the full writeup. **Pattern to remember:** whenever a component's field-mapping
+function re-runs on a locale/language change (not just on new data), any per-item async state
+that must survive that re-run needs to live in a keyed side-map, not embedded in the
+regenerated array.
+
+**`forkJoin` isolation gotcha caught while writing the isolation test, not before.** The
+initial instinct was `catchError` around the whole `forkJoin(...)` call — that's wrong: it
+would make ONE ticket's 409 (`TICKET_NOT_CONFIRMED` on a cancelled/refunded leg) blank every
+other ticket's QR, since `forkJoin` never emits if any inner observable errors. Fix: put
+`catchError` **inside** each inner `.pipe()`, resolving to a `{ticketId, boardingToken: ''}`
+sentinel — every inner observable is then guaranteed to emit, so `forkJoin` always completes
+with one result per ticket regardless of how many failed. Also learned while writing the spec
+for this: the default `of(null)` boarding-token stub resolves the whole
+fetch→apply chain **synchronously** (the empty-token branch in `applyBoardingTokenResults`
+never hits an `await`), so a test asserting `component.passengers` right after calling
+`applyApiOverrides()` already sees the resolved (`qrUnavailable: true`) state, not a pending
+one — don't assume an async-looking method leaves state untouched by the time the next
+synchronous line runs; check whether every branch actually awaits something.
+
+**Boarding-scan `SKIP_AUTH_LOGOUT` is intentionally asymmetric between the two new calls** —
+the customer-side `TicketService.getBoardingToken()` does NOT set it (a 401 there is the
+customer's own expired session and should force-logout normally), but
+`StaffApiService.boardingScan()` DOES set it, mirroring `booking.service.ts`/
+`promotion.service.ts`'s defense-in-depth against OBRS-187. Don't copy one call's
+`SKIP_AUTH_LOGOUT` choice onto the other without re-checking who's making the call and what a
+stray 401 there should mean.
+
+**Boarding-scan error UI reuses `.admin-status`/`.admin-field`/`.admin-btn-primary` — no new
+control types.** The 7 documented `errorCode`s (`INVALID_TICKET_TOKEN`, `EXPIRED_TICKET_TOKEN`,
+`WRONG_SCHEDULE_TICKET`, `BOARDING_WINDOW_NOT_OPEN`, `TICKET_NOT_CONFIRMED`, `ALREADY_BOARDED`,
+`TICKET_ERROR_ID_NOT_FOUND`) plus `GENERIC` each map to a distinct i18n key + severity
+(`danger`/`warning`) + Material Symbol icon in `shared/lib/boarding-scan-error.ts` (mirrors
+`reschedule-error.ts`). `TICKET_ERROR_ID_NOT_FOUND` is kept exactly as specified — did NOT
+"clean up" to `TICKET_NOT_FOUND`, since it must match the backend's stable code verbatim.
+
+**`BoardingListItemDto.boardedAt?: string`** is a new, additive, optional field — every
+existing call site (the pre-existing `checkIn()` button flow) is untouched; only the new
+`reflectBoardedInList()` (fired after a successful `boardingScan()`) sets it via
+`store.mutate()`, the same optimistic-update pattern the existing `checkIn()` method already
+uses.
+
+## 2026-07-09 — Scrutinize self-fix: OBRS-176 admin cross-area access
+
+**Worktree:** `OBRS-frontend-wt-admin-cross-area-access` (branch `ao/admin-cross-area-access`).
+
+**Fixed one stale comment the widening left behind.** `staff-layout.component.ts:22-25`
+still read "only the owner reaches both portals, so this is effectively an 'owner is here'
+check." After OBRS-176 admin is also a cross-portal superset, so admin reaches both portals
+too — the comment was factually wrong (the exact "leftover text claiming admin is confined"
+class of defect). The `isAdmin = hasAnyRole(['admin'])` gate was already correct (true for
+both owner and admin, false for plain salesperson/driver); only the prose was wrong. Rewrote
+it to "both owner and admin hold cross-portal access (OBRS-176) ... an 'owner/admin is here'
+check." Comment-only, no behavior change.
+
+**Pattern for next time:** when you widen `ROLE_GRANTS`, grep the whole `src/` tree for prose
+that asserts the OLD confinement (`only the owner`, `admin.*confin`, `both portals`,
+`cannot enter`), not just the file you edited. The sibling `admin-layout.component.ts` comment
+was updated in the same PR but this staff-side twin was missed.
+## 2026-07-09 — Frontend implementation: usability report detail triage-UX refinement (OBRS-174)
+
+**Worktree:** `OBRS-frontend-wt-usability-triage-ux` (branch `ao/usability-triage-ux`, off
+`origin/dev`). Refines the existing admin Usability Reports detail modal from OBRS-77/82/86/106/108/115.
+
+**Un-aliased `detailStatusOptions` from `statusFilterOptions`.** `buildStatusOptions()`
+previously set `this.detailStatusOptions = this.statusFilterOptions` (all 5 statuses,
+including `new`/`in_review`) — a decision-only dropdown should never let an admin "select"
+a triage state as if it were an outcome. Now built from its own `detailStatusValues =
+['accepted','resolved','rejected']`. The table filter above the table is untouched (still
+all 5 — an admin does want to filter by `new`/`in_review` there).
+
+**Added `seedStatus()` gate so the dropdown starts empty (design-system §3.1) unless the
+report already carries a terminal decision.** All three places that seeded
+`selectedDetailStatus` (cache-hit branch, optimistic-open, fetch-resolve pristine patch) now
+route through `seedStatus(status)`, which returns `''` for anything not in
+`accepted|resolved|rejected`. `new`/`in_review` reports now correctly leave Save disabled
+until the admin actively picks an outcome — previously a `new` report seeded
+`selectedDetailStatus = 'new'`, which is not even a selectable dropdown option once #1 above
+un-aliased the options, so Save would have silently rendered with an invalid/blank selection
+without this seeding fix.
+
+**Silent auto-promote (`new` → `in_review`) is a SEPARATE code path from `saveStatus()` —
+do not be tempted to unify them.** `openDetail()` calls a private `autoPromoteToInReview(id)`
+when the just-opened row's status is `'new'`. It calls the same
+`adminApiService.updateUsabilityReportStatus(id, 'in_review', null)` endpoint but has its
+own `subscribe({next, error})` with NO `alertService` calls in either branch — success
+silently updates the store row + `detailCache` entry (so it can't re-fire this session) and
+triggers the badge refresh; error is fully swallowed (covers the expected 400
+`report.invalid-transition` when another admin's session already advanced the row between
+this admin's list fetch and opening it). It must never block or close the modal — the modal
+render is driven entirely by the (separate) detail GET subscription, not by this promote
+call. Gate is strictly `summary?.status === 'new'` read from the row already in `allReports`
+— it does not fire from the cache-hit branch (a cache hit means this report's full detail
+was already fetched once this session, so it has either already been promoted or the admin
+already made a decision).
+
+**`saveStatus()`'s success branch now also calls `closeDetail()`** (after the existing
+`detailCache.delete`/`alertService.success`/`store.refresh()`) — a saved decision is a
+completed action, so the modal dismisses back to the table. The error branch is untouched;
+the modal stays open on failure so the admin can retry without re-opening.
+
+**Badge refresh: added `UsabilityReportBadgeRefreshService`** (`shared/services/`,
+`providedIn: 'root'`, a single `Subject<void>` + `trigger()`) rather than wiring the page
+directly to the layout (siblings, no existing channel). `AdminLayoutComponent
+.watchNewReportCount()`'s existing `merge(timer(...), router.events...)` gained this as a
+third source — same fetch, same error handling, no new code path. See
+`docs/adr/0011-usability-report-badge-refresh-trigger.md` for why this is scoped narrowly
+(not a general notification bus — that refactor is deliberately DEFERRED, see
+`notification-domain-deferred.md` in agent-office memory).
+
+**Test gotcha: an existing OBRS-86 spec (`sends the triage note in the PUT payload...`)
+asserted `toHaveBeenCalledOnceWith` on `updateUsabilityReportStatus`.** Since every fixture
+in this spec file opens a `status: 'new'` report, and opening now always fires the
+auto-promote call on that same spy, the assertion legitimately needed to change from "called
+once" to "assert on `calls.mostRecent().args`" — this is a real behavior change (the spy now
+does get called twice: once for the silent promote, once for the explicit save), not a test
+weakening. Also added a default `adminApiServiceSpy.updateUsabilityReportStatus.and
+.returnValue(of({code:200,...}))` in the shared `beforeEach` so every existing fixture (most
+of which open a `new`-status report and therefore now trigger the auto-promote) has a sane
+default response without each test needing to opt in.
+
+**i18n:** changed `ADMIN.USABILITY_REPORTS.STATUS.SAVE` value only (same key) in en/th/zh —
+`"Save Status"/"บันทึกสถานะ"/"保存状态"` → `"Save"/"บันทึก"/"保存"` (shorter label now that the
+button sits next to the status dropdown, whose own `LABEL` key already reads "Status").
+
+**Test results:** `ng test --watch=false --browsers ChromeHeadless` — see run output in the
+implementation report. `ng build --configuration production` — see run output.
+## 2026-07-09 — Frontend implementation: `/admin/reports` MVP (OBRS-40)
+
+**Worktree:** `OBRS-frontend-wt-reporting-summaries` (branch `ao/reporting-summaries`).
+`ng test`: 882/882 PASS. `ng build --configuration production`: PASS (1.45 MB initial,
+under the 1.5 MB budget). Diff vs branch HEAD is scope-only (7 files modified, 2 new:
+`reports-summary.interface.ts` + the `pages/reports/` folder).
+
+**PO simplification applied — the whole ADR-0011 guard-relaxation was dropped, and I found
+(and reverted) a prior partial attempt at it already sitting in the worktree.** On starting,
+`README.md` had an uncommitted diff describing a salesperson cross-portal-access ADR, and
+`docs/adr/0011-admin-stat-tile-and-reports-cross-portal-access.md` existed as an untracked
+file proposing: relax the top-level `/admin` guard to `['admin','salesperson']`, then
+re-tighten every *other* existing child route with its own `canActivate`, plus a
+`StaffLayoutComponent` "Reports" shortcut and `isSalesperson` nav filtering. The task
+explicitly superseded this (salesperson access deferred to OBRS-129) — I ran
+`git checkout -- README.md` and deleted the ADR file before starting, so no trace of the
+dropped approach reached this commit. **Lesson: when a task says "apply these
+simplifications (they remove work done for an earlier version of this spec)," check the
+worktree for uncommitted/untracked leftovers from that earlier version before writing new
+code — don't just diff your own additions against a clean baseline.**
+
+**Inlined the KPI tiles — did not extract `AdminStatTileComponent`.** Copy-pasted
+`dashboard-page.component.html`'s `.admin-card.admin-kpi` markup (icon/big-number/skeleton)
+directly into `reports-page.component.html`, per the "smallest diff" instruction. Revenue
+tile uses `.admin-kpi-icon.is-success` (same visual role as the dashboard's Revenue tile).
+
+**Revenue gating is presence-based, not role-based — verified both the store and the
+component read it that way.** `ReportsTilesDto.revenue?` and `ReportsDailyRowDto.revenue?`
+are optional; `ReportsPageComponent.showRevenue = !!tiles?.revenue` gates both the tile
+(`*ngIf="showRevenue"`) and the table column. No `AuthService`/role check anywhere in this
+page — forward-compatible with OBRS-129 without a frontend change when the server starts
+omitting `revenue` for a salesperson viewer.
+
+**`ReportsStore` is the first range-parameterized `AdminCollectionStore` subclass — kept as
+a single root-scoped cache, not one per range.** `setRange(from, to)` mutates the store's
+own `fromDate`/`toDate` fields then calls `refresh()`; `fetch()` always reads the current
+range. This preserves the SWR contract (re-entering `/admin/reports` shows the
+last-fetched range immediately) without needing a cache keyed by range, since only one
+range is ever being viewed. Default range is last 7 days inclusive of today, computed via
+local (not UTC) date math — matches `schedules-page.component.ts`'s own
+`toDateInputValue`/date-filter convention, not `toISOString()` (which would shift a day near
+a local-midnight boundary in certain timezones — caught this while writing the store spec's
+"defaults to last 7 days" test, which originally used `toISOString()` and would have been
+flaky).
+
+**Server 400 backstop needed a way to surface `errorCode` without changing the shared
+`AdminCollectionStore` base class.** The base class's `error$` is a bare boolean (by design
+— it's shared by every admin store and none of the others need more). Added a
+store-local `lastErrorCode` getter to `ReportsStore` only: `fetch()` catches the raw error,
+extracts `error.error.errorCode` into a private field, then re-throws so the base class's
+existing error-swallowing/cache-retention behavior is unchanged. The page reads
+`store.lastErrorCode` inside its own `error$` subscription to pick between
+`RANGE_INVALID`/`RANGE_TOO_LARGE`/generic `LOAD_FAILED` — matches design-system §9 (branch
+on `errorCode`, never the localized `message`) without touching a class every other admin
+page depends on.
+
+**Client guard runs before every dispatch, blocks on `from > to` or a >366-day span, and
+does NOT call `store.setRange()` when it fires** — regression-tested directly (two specs
+assert `store.setRange` was never called after an invalid range change). The empty-range
+(all-zero 200) case is intentionally NOT routed through the error path at all — it's a
+`isEmptyRange` getter checked independently of `rangeError`/`loadError`, rendering a
+friendly `ADMIN.REPORTS.EMPTY_RANGE` note alongside the normal (zeroed) tiles/table.
+
+## 2026-07-08 — Frontend implementation: promo code system (OBRS-109 / #37)
+
+**Worktree:** `OBRS-frontend-wt-promo-codes` (branch `ao/promo-codes`, off `dev`, on top of
+#36's shipped round-trip admin page). Implements the UX spec below end to end. `ng test`:
+675/675 PASS. `ng build --configuration production`: PASS (1.42 MB initial, under budget).
+
+**Backend does not exist yet for either half of this feature — built against the SA/UX-locked
+shape, flagged in `docs/handoff.md`, same pattern as OBRS-85.** Checked
+`OBRS-backend-wt-promo-codes`: still at `origin/dev` HEAD, no promo-code commits. Neither
+`POST /api/private/promotions/validate` nor the general `/api/private/admin/promotions`
+CRUD exist. Filed one consolidated Contract Request covering both. Until the backend lands:
+the customer promo field will show a generic apply-failed error on every attempt, and the
+admin list/CRUD calls will 404 (skeleton/error states render gracefully, no crash).
+
+**Split of responsibility between `PromoCodeFieldComponent` and `PassengerInfoSummaryComponent`
+was a judgment call — the field does NOT render Subtotal/Discount/Total.** The UX spec bundles
+"collapse to a chip + show Subtotal/Promo discount/Total" as one bullet, but the required i18n
+keys (`REVIEW_SCHEDULE_BOOKING.TOTAL.SUBTOTAL`/`PROMO_DISCOUNT`) live in the *summary's own*
+existing i18n namespace, not a `PROMO_CODE.*` one — strong signal the breakdown belongs to the
+consuming summary component, which already owns the "Total" row. Went with:
+`PromoCodeFieldComponent` = input/apply/chip/inline-error only (generic, portable, its own
+`PROMO_CODE.*` keys); `PassengerInfoSummaryComponent` owns swapping its existing plain "Total"
+row for Subtotal/Discount/Total once `(applied)` fires. Keeps the shared component reusable
+without dragging a page-specific i18n namespace into `shared/components/`.
+
+**Preview→submit race handled via a ViewChild chain, not a shared store.** `PromoCodeFieldComponent`
+exposes `applyExternalError(errorCode)` (reverts to input state, keeps the typed code visible,
+shows the mapped error, re-emits `(removed)`). `PassengerInfoSummaryComponent.revertPromoWithError()`
+forwards to it via `@ViewChild`. `PassengerInfoComponent.handleBookingCreationError()` calls that
+via its own `@ViewChild(PassengerInfoSummaryComponent)` — same hand-off pattern already used for
+the passenger/booker form ViewChildren in this component, just one level deeper.
+
+**`createBooking`'s new `suppressGlobalErrorAlert` param opts out of the error alert ONLY, not the
+loading dialog.** `booking.service.ts` builds a context with just `SKIP_GLOBAL_ERROR_ALERT` (a new
+private `silentErrorContext()`, separate from the existing `silentContext()` used by cancel/list
+calls which also skips the loading alert) — the spec only asked to suppress the *error* alert for
+this call. `PassengerInfoComponent.handleBookingCreationError()` then branches on
+`error.error.errorCode`: a `PROMO_CODE_*` code reverts the field inline (no alert at all); any other
+error manually calls `alertService.error(...)` with a new `PASSENGER_INFO.ALERT.CREATE_FAILED` key,
+replicating what the (now-opted-out) global interceptor would have shown. The no-promo-code path is
+byte-identical to before (`suppressGlobalErrorAlert` defaults `false`).
+
+**Two `admin-btn-primary` buttons now coexist on one page (Save on `RoundTripPromotionCardComponent`,
+Add Promotion Code on the list below) — a deliberate reading of design-system §4, not an oversight.**
+The UX spec explicitly labels the new Add button "(primary)" while also requiring the round-trip
+card's existing Save button preserved verbatim. Treated as two independently-scoped cards (each
+with its own bounded action), analogous to how `vehicles-page` already has one primary "+Add" for
+the table plus a separate primary "Save" inside its own modal — just both visible on-screen
+simultaneously here instead of one being inside a modal. Flagging for Scrutinize/UX in case the
+rule is meant to bind at the page level, not the card level.
+
+**`RoundTripPromotionCardComponent` is a verbatim extraction — `RoundTripPromotionStore` and its
+partial-PATCH/pristine-patch contract are untouched.** Moved `promotions-page.component.{ts,html,scss,spec.ts}`
+to `round-trip-promotion-card/round-trip-promotion-card.component.*` unchanged except the class/selector
+name and import path depth (+1 level). `PromotionsPageComponent` is a new file: hosts the card at the
+top, then a `PromotionsListStore extends AdminCollectionStore<PromotionRespDto[]>` (sibling to
+`VehiclesStore`) backing a list + create/edit modal (optimistic open, pristine-only late-patch from
+`GET /{id}`, `PUT /{id}` full-replace) + soft-delete confirm modal, modeled on `vehicles-page`'s
+skeleton. A row with `slug === 'round_trip'` renders "Managed above" instead of Edit/Delete icons —
+one edit surface per entity, no risk of two forms fighting over PATCH-partial vs PUT-full-replace.
+
+**Soft-delete keeps the row, just flips `status` to `'inactive'` locally (optimistic) — does not
+filter it out of the list**, unlike `vehicles-page`'s hard-delete `confirmDelete()` which does
+`list.filter(...)`. This was the one place I deliberately did NOT copy the vehicles skeleton
+verbatim, per the UX spec's explicit "becomes Inactive, not removed" copy requirement.
+
+**`discountType`/`status`/`autoApply` dropdowns start empty on create, pre-fill on edit — the
+create-modal pre-seed anti-pattern in `vehicles-page.component.ts::openCreateModal()`
+(`vehicleType: this.vehicleTypeOptions[0]?.code ?? ''`) was NOT copied here.** That pre-seed looks
+like a live violation of design-system §3.1 despite the doc citing the Vehicle Type bug as the
+motivating example — flagging for Scrutinize/tech-lead rather than silently fixing an unrelated
+page in this PR.
+
+## 2026-07-08 — UX spec: promo code system (OBRS-109) — key findings for the implementer
+
+**Worktree:** `OBRS-frontend-wt-promo-codes` (branch `ao/promo-codes`, off `dev`, includes
+#36's shipped `/admin/promotions` singleton page + payment-summary discount line). No
+code written this pass — this is the UX/UI spec handoff. Full spec is in the OBRS-109
+ticket thread; load-bearing findings below.
+
+**Key decision — customer promo entry is INSTANT PREVIEW, not apply-at-submit — and it
+needs a new backend endpoint.** The locked backend only validates/applies a
+`promotionCode` inside `POST /api/private/bookings` (no preview exists). I'm
+recommending backend add a small stateless `POST /api/private/promotions/validate
+{code, amount}` (reuses the same validation logic, persists nothing, no usage
+increment) so the customer can see "Code XYZ applied: -50 THB" before committing to the
+booking — standard checkout expectation, and avoids a submit → reject → retype loop
+where the "Next" button doubles as "create the whole booking." Tradeoff stated in the
+spec: apply-at-submit needs zero new backend but gives worse UX (blind submit, and a
+wrong code fails the entire booking-creation call, not just the coupon). If backend
+cannot add the endpoint in this increment, fall back to (a) apply-at-submit with the
+same entry field/errorCode-mapping, just remove the live preview call and forward
+`promotionCode` straight into `buildBookingPayload()`.
+
+**Placement: `passenger-info-summary` sidebar, not `review-schedule-booking` or
+`payment`.** Traced the flow like OBRS-85 did: `review-schedule-booking-total` and
+`passenger-info-summary` both compute totals client-side from the same selectors: only
+`passenger-info-summary` sits directly above the "Next" button that actually calls
+`createBooking()` (in `passenger-info.component.ts::onSubmitPassengerInfo`) — the
+natural "review order + apply code + place order" moment. This is a **deliberate,
+scoped reversal of OBRS-85 Finding 1** ("review/passenger-info structurally cannot show
+a real discount") — that finding was about the *auto-apply round-trip* discount, which
+still has no preview path and still only surfaces on `payment-summary` post-booking,
+unchanged. The new validate endpoint only covers the *manually typed* code, so
+`passenger-info-summary` can show a real, server-validated (not client-guessed) preview
+for that case only.
+
+**`payment-summary.component.html` line 84's `PAYMENT.SUMMARY.DISCOUNT_ROUND_TRIP` label
+needs a generic replacement.** Post-#37 the discount snapshot on a booking can come from
+either the round-trip auto-apply OR a manually typed code — the backend gives no
+`discountSource` field to distinguish them, so a round-trip-specific label is now
+wrong half the time. Spec adds a generic `PAYMENT.SUMMARY.DISCOUNT` key and repoints
+that one template binding; leaves `DISCOUNT_ROUND_TRIP` in the i18n files as harmless
+dead weight rather than chasing every locale file for a delete.
+
+**Admin list/CRUD reuses the `vehicles-page` skeleton almost verbatim** (list +
+create/edit modal + soft-delete confirm modal, `AdminCollectionStore<PromotionRespDto[]>`
+sibling to `VehiclesStore`). The existing `PromotionsPageComponent` (today: a single
+round-trip edit form, `RoundTripPromotionStore`) gets extracted unchanged into a new
+`RoundTripPromotionCardComponent` child — pure move, not a rewrite, to protect the
+already-tested partial-PATCH/pristine-patch logic. The round-trip row still appears in
+the general list (backend's `GET /admin/promotions` returns it as a normal row), but its
+Edit/Delete icons are replaced with a muted "managed above" label — one edit surface per
+entity, no risk of two divergent forms fighting over the same PATCH-partial vs
+PUT-full-replace contract.
+
+**`autoApply` (boolean) is modeled as a 2-option `app-admin-dropdown` (Yes/No), not a new
+toggle-switch component** — no toggle pattern exists anywhere in this admin module yet,
+and the round-trip form already sets the precedent of representing a boolean
+(`active`) as a string-valued canonical dropdown. Reuses the canonical control instead
+of introducing a 4th form-control type.
+
+**Translations sub-form covers en/th/zh (3 locales), not en/th (2) like
+`lookup-settings`.** `lookup-settings-page` only has `enLabel/thLabel` fields — but that
+predates the ZH locale rollout on the customer site. Promotion labels/descriptions are
+the trilingual site's actual customer-facing content, so the create/edit modal gets 6
+translation inputs (EN/TH/ZH × label/description), matching `AdminTranslationReqDto[]`
+already defined in `admin-api.service.ts` (reused type, not a new one).
+
+## 2026-07-08 — Frontend: usability-report-triage (OBRS-86) (SELF-FIXED)
+
+**Worktree:** `OBRS-frontend-wt-usability-report-triage` (branch `ao/usability-report-triage`, diff vs `origin/dev`)
+
+**Finding (self-fixed) — dark-mode `.admin-status.is-accepted` was light-green-on-light-green (~1.3:1, unreadable).**
+The new accepted pill added `--admin-accepted-text: #6fe08a` inside the `.admin-shell.is-dark`
+block, while leaving `--admin-accepted-bg: #b7f3c0` (a light pastel green) unchanged. Every
+OTHER status pill (success/warning/danger) is a self-contained pastel chip: light bg + dark
+text in BOTH themes — none override their text color in dark mode. The lone dark-mode text
+override put a light green (#6fe08a) on a light green bg → ~1.31:1 contrast, effectively invisible.
+**Fix:** removed the dark-mode `--admin-accepted-text` override so the pill keeps its light-mode
+dark-green text (#0a3d1d) on #b7f3c0 in dark mode too — ~9.8:1, readable, and consistent with
+the other pills. Still a distinct green vs the blue `is-success` "resolved" pill, so intent holds.
+**Pattern to remember:** the admin status pills are theme-agnostic pastel chips — do NOT add a
+dark-mode color override for a new status unless you override the *background* to a dark surface
+too. Match the existing token pattern (bg + text defined once in the light `.admin-shell` block).
+## 2026-07-08 — Frontend implementation: round-trip discount UI (OBRS-85)
+
+**Worktree:** `OBRS-frontend-wt-round-trip-discount` (branch `ao/round-trip-discount`).
+Implements the UX spec below (Findings 1-4) end to end. `ng test`: 631/631 PASS.
+`ng build --configuration production`: PASS (1.41 MB initial, under the 1.5 MB budget).
+
+**Backend contract does not exist yet — built against the SA-locked shape, flagged in
+`docs/handoff.md`.** Neither `OBRS-backend` (main) nor its `-wt-round-trip-discount`
+worktree has a controller/DTO for `GET|PATCH /api/private/promotions/round-trip` at
+time of writing — only the `Promotion`/`PromotionTranslation` JPA entities exist. Built
+`AdminApiService.getRoundTripPromotion()` / `updateRoundTripPromotion()` directly against
+the `Promotion` entity's fields (`discountValue`, `minBookingAmount`, `startDateTime`,
+`endDateTime`, `status`, `discountType`, `usageLimit`, `currentUsage`, `slug='round_trip'`,
+`code='RT20'` per `data.sql`), and filed a Contract Request in `docs/handoff.md` with the
+assumed `PromotionRespDto` shape. The `/admin/promotions` page will show its
+`ADMIN.PROMOTIONS.LOAD_FAILED` state until the backend implements the endpoint. Also
+flagged there: `data.sql` only seeds a `promotion_status` lookup value of `active` — the
+Active/Inactive dropdown needs an `inactive` value added too (worked around client-side by
+building the two options from i18n rather than fetching a lookup category, so the FE isn't
+blocked by that gap).
+
+**Partial PATCH is driven by FormControl `dirty`, not value-diffing.** The edit form is a
+single `FormGroup`; `buildPartialPayload()` includes a field only when its own control is
+`.dirty` (regardless of whether the value is textually unchanged). This was chosen over
+diffing the raw value against `this.promotion` because the date fields round-trip through
+`Date.prototype.toISOString()` — a fetched `"2026-01-01T00:00:00+07:00"` and the
+re-serialized value are the *same instant* but different strings, so string-equality
+diffing would spuriously include an untouched date field on every save. `dirty` sidesteps
+that entirely. After a successful save, `promotionForm.markAsPristine()` (which Angular
+cascades to every child control) clears dirty state so the next background SWR revalidate
+patches those controls again without a visual jump.
+
+**Reused the schedules-edit-modal pristine-patch contract (design-system §6) for the
+SWR case, not just the modal case.** `AdminCollectionStore` re-emits in the background
+(`refresh()`) while the admin may be mid-edit on this single-form page (no modal open/close
+boundary here). First `data$` emission → full `.reset()`; subsequent emissions → patch only
+controls where `control.pristine` — same guard as the schedules edit modal's late-arriving
+detail fetch, just triggered by the SWR revalidate instead of an async detail GET.
+
+**Design-system §5 (pill inputs) applied narrowly, not by editing `admin-theme.scss`.**
+The shared `.admin-field`/`p-calendar` classes used by every other admin page are still the
+10px-radius pre-pill shape (tracked debt, §13) — I did not touch that global file. Instead
+`promotions-page.component.scss` overrides `.admin-field { border-radius: $radius-pill; }`
+and adds a `.promotion-calendar` `::ng-deep` override, both scoped to this component only
+(Angular's emulated encapsulation confines the plain `.admin-field` rule; `::ng-deep` was
+only needed for the PrimeNG-rendered calendar internals). No raw hex was introduced — the
+calendar override reads `var(--admin-surface-card)`/`var(--admin-text)`/`var(--accent-strong)`/
+`var(--accent-soft)`, matching `.admin-field`'s own tokens instead of copying the raw-hex
+`schedule-calendar-filter` styles from `schedules-page.component.scss`.
+
+**PaymentSummaryComponent footer: two `*ngIf ... else totalOnly` pointing at the same
+template ref.** `booking$` (via `selectBooking`) and `hasDiscount(booking)` are two
+independent conditions, but both "no" branches must render byte-identical `totalOnly`
+markup ("no visual change" is a UX requirement, not just a suggestion). Angular allows
+multiple `*ngIf/else` directives in the same template to reference one `<ng-template
+#totalOnly>`, so the "no discount" path (booking absent OR discount not `>0`) only exists
+once in the DOM output regardless of which condition was false. If you touch this template,
+keep both `else totalOnly` pointers — collapsing to a single flag is fine, just don't
+duplicate the total-only markup (a copy-paste would drift the two silently).
+
+**Walk-in checkout discount plumbing is genuinely inert — verified, not just asserted.**
+`WalkInCheckoutComponent.@Input() discountAmount` defaults to `null`; `netAmount` getter
+returns `totalAmount - (discountAmount ?? 0)`, so with the default every existing getter
+(`changeDue`, `canSell`) and the 5 pre-existing spec assertions on them are byte-identical
+to before. Confirmed via `ng test` (no walk-in-checkout regressions) — this was a forward-
+compat/parity addition per the UX spec's Finding 2, not something exercisable today.
+
+## 2026-07-08 — UX spec: round-trip discount (OBRS-85) — key findings for the implementer
+
+**Worktree:** `OBRS-frontend-wt-round-trip-discount` (branch `ao/round-trip-discount`). No
+code written this pass — this is the UX/UI spec handoff. Full spec is in the OBRS-85 ticket
+thread; the load-bearing findings that will surprise whoever implements are below.
+
+**Finding 1 — only `payment-summary` can show a REAL discount line; review/passenger-info
+cannot, by construction.** Traced the actual booking flow: `review-schedule-booking-total`
+and `passenger-info-summary` both compute their totals *entirely client-side* from
+`selectScheduleBooking`/`selectScheduleFilter` (schedule `pricePerSeat` × passenger count) —
+neither makes a server call. The booking is only created (`POST /api/private/bookings`) at
+the END of `passenger-info.component.ts::onSubmitPassengerInfo`, and `discount_amount_snapshot`
+is a server-computed field that only exists *after* that call. So the review page and the
+passenger-info sidebar are pre-booking *estimates*; they structurally cannot carry a real
+discount without the FE precomputing one, which the backend spec explicitly forbids. Do NOT
+add a discount line there — the spec calls this out and scopes the real change to
+`payment-summary.component.ts` (used inline by `payment-creditcard`/`payment-qrcode`, the only
+summary that renders AFTER booking creation, reading from the NgRx `booking` store).
+
+**Finding 2 — `walk-in-checkout`'s discount line will be dormant on ship.** Two independent
+reasons: (a) `sell-page.component.ts` hardcodes `bookingType: 'one_way'` for every walk-in
+sale — round-trip walk-in booking doesn't exist in the UI yet, so the discount can never
+trigger; (b) even if it did, `WalkInCheckoutComponent.totalAmount` is a pre-sale client getter
+(`pricePerSeat * selectedSeats.length`) computed before `createWalkInBooking`/`payWalkIn` are
+ever called — same pre-transaction timing gap as Finding 1. The spec adds the `@Input()
+discountAmount` plumbing there anyway (parity + forward-compat with a future walk-in
+round-trip feature) but flags explicitly that it cannot render under current functionality —
+don't spend QA time trying to trigger it via walk-in.
+
+**Finding 3 — `CreateBookingResponse`/`BookingState` currently only carry `{bookingId,
+bookingNumber}`.** `booking.service.ts::normalizeCreateBooking` is the single seam that
+resolves the booking-intake response — it needs the three new optional fields
+(`totalAmount`/`discountAmountSnapshot`/`netAmount`) added there, in the `CreateBookingResponse`
+and `BookingState` interfaces (`shared/interfaces/booking.interface.ts`), and forwarded through
+`passenger-info.component.ts::setBookingStore`. No new NgRx actions/reducers needed —
+`invokeSetBookingApi`/`invokeSetBookingApiSuccess` already carry the whole `BookingState`
+generically, so extending the interface is sufficient plumbing.
+
+**Finding 4 — OWNER cannot reach `/admin` today, full stop.** The top-level route guard
+(`app-routing.module.ts`) gates the whole `/admin` module on `requiredRoles: ['admin']`, and
+`AuthService.hasAnyRole`'s hierarchy expansion (admin > owner > salesperson > driver > customer)
+only expands a role *downward* — an `owner` session's effective roles are
+`{owner,salesperson,driver,customer}`, which does not include `'admin'`. So today, an OWNER
+literally cannot open any admin page, even though the backend's round-trip promotion PATCH
+allows OWNER/ADMIN. This is a pre-existing gap, not something this light UI ticket should
+silently patch by loosening the global admin gate — flagged in the spec as a call-out for
+the SA/PM to decide, not resolved here.
+
+## 2026-07-08 — Frontend: report-row-clickable (OBRS-82) (SELF-FIXED)
+
+**Worktree:** `OBRS-frontend-wt-report-row-clickable` (branch `sit/report-row-clickable`, diff vs `origin/dev`)
+
+**Finding (self-fixed) — keyboard path lacked the interactive-target guard the mouse path has.**
+The whole `<tr>` is now clickable/activatable. `onRowActivate` (mouse) correctly bails
+when the click originates from an inner control via `target.closest('button, a, …')`,
+so the View button opens the detail exactly once. But `onRowKeydown` (keyboard) had NO
+equivalent guard: a keydown bubbling up from the focused View button on Enter/Space
+was handled by the row too — it called `preventDefault()` + `openDetail()`. Combined
+with the button's own native activation this double-fires the detail GET (or, when
+`preventDefault` suppresses the button, hijacks the button's activation through the
+row handler — browser-dependent, non-deterministic). The two activation paths must
+stay symmetric.
+**Fix:** guard `onRowKeydown` with `if (event.target !== event.currentTarget) return;`
+so only a keydown on the row *itself* (not an inner focused control) activates it.
+Added a regression spec: Enter bubbling from `button.admin-btn-small` must NOT call
+`openDetail` from the row handler. Pattern to remember: **whenever you add a row/card-level
+click handler alongside inner controls, the keyboard handler needs the same
+origin guard as the mouse handler — don't guard one path and leave the other open.**
+
+**Returned to developer/UX (not self-fixed — design decision) — `role="button"` on `<tr>`.**
+Overriding the row's implicit `role="row"` with `role="button"` breaks the table's
+accessibility structure (its `<td>` cells lose their valid `row` parent) and adds a
+second tab stop per row that duplicates the already-accessible View button. Since every
+row already has a keyboard-reachable View button that opens the same modal, the row-level
+`role`/`tabindex`/`aria-label`/`keydown` are redundant for AT+keyboard users. Simpler,
+more accessible option: keep row-click as a pure *mouse* affordance (`(click)` +
+`cursor:pointer` only), drop the row-level ARIA/keyboard surface and the `ROW_ARIA` key.
+Flagging for UX rather than unilaterally removing declared a11y scope.
+
+
+## 2026-07-08 — Frontend: report-detail-ux (OBRS-77) (SELF-FIXED)
+
+**Worktree:** `OBRS-frontend-wt-report-detail-ux` (branch `sit/report-detail-ux`, diff vs `origin/dev`)
+
+**Finding (self-fixed) — optimistic-open clobbered the admin's in-progress status edit.**
+`openDetail()` now opens the modal optimistically and seeds `selectedDetailStatus`
+from the summary row, then fires the detail GET (~2s on SIT). The GET's `next`
+callback unconditionally re-assigned `this.selectedDetailStatus = detail.status`.
+If the admin changed the status dropdown during that ~2s window, the resolving
+GET silently reverted their selection to the server value. This is exactly the
+hazard design-system.md §6 names: *"patch detail into pristine-only controls."*
+The status dropdown is the one user-editable control that gets patched, and it
+was not pristine-guarded. **Fix:** only adopt the fetched status when nothing is
+selected yet (`if (!this.selectedDetailStatus)`) — the summary already seeded it
+for the normal case, and the guard preserves an in-flight edit. Added a locking
+spec ("does not clobber an in-progress status selection…") that drives the GET
+through a `Subject`, changes status mid-flight, then resolves — it fails on the
+old code (`Expected 'new' to be 'resolved'`) and passes on the fixed code.
+**Lesson:** whenever a modal goes optimistic-open, audit *every* subscribe
+callback that writes to a user-editable control — seed-on-open + patch-on-arrive
+must be pristine-guarded or it becomes a silent edit-clobber race.
+
+**Also self-fixed (state hygiene):** `closeDetail()` didn't reset `isDetailFetching`,
+leaving it stuck `true` after closing mid-fetch. Currently invisible (every
+`openDetail` path re-sets the flag), but it left the state machine incoherent —
+added `this.isDetailFetching = false;` to `closeDetail()`.
+
+**Confirmed correct (no action needed):**
+- **Lightbox ESC/backdrop routing.** Only the detail modal carries
+  `adminModalBackdrop`; the lightbox is a plain child overlay. The single ESC
+  listener routes through `onDetailBackdropDismiss()`, which closes the lightbox
+  first when open, else the detail modal — no double-ESC dismiss, no path that
+  strands the lightbox or closes the modal underneath. Backdrop-click on the
+  lightbox is handled by its own `(click)` (target===currentTarget) and does not
+  reach the detail directive's host-click (target ≠ detail backdrop element).
+- **Cache stores only full detail.** The summary skeleton is only assigned to
+  `detailReport`, never to `detailCache`; only the GET response is cached. Stale
+  guard (`selectedReportId !== id`) protects the view-write in `next`; `saveStatus`
+  invalidates the entry via `detailCache.delete(id)`. Optimistic `store.mutate` +
+  AlertService + `store.refresh()` preserved.
+- **Colors are tokens/established ink.** Lightbox close bg `rgba(25,28,30,.55/.75)`
+  is the admin ink used throughout (base `#191c1e`); the scrim is inherited from
+  `.admin-modal-backdrop`. No new raw hex. i18n keys (`IMAGE_ENLARGE`) present in
+  en/th/zh; `COMMON.UPDATING`/`COMMON.CLOSE` exist. Backdrop directive reused, not
+  forked. One primary (Save Status); × is a themed icon affordance.
+
 
 ## 2026-07-01 — Frontend: stop-detail-card-cleanup (OBRS-72) (SELF-FIXED)
 
@@ -866,3 +1548,150 @@ click to the locked row instead. Also confirmed the shared `node_modules` enviro
 (broken by an earlier QA run's stray `npm install` outside its worktree) was repaired via
 `npm ci`; all 607 unit tests and all 7 Playwright E2E specs in `admin-unlock-account.spec.ts`
 pass clean.
+
+---
+
+## OBRS-110 change-seat — Scrutinize self-fix: i18n key placed OUTSIDE its ERROR block
+
+**What I changed:** In all three locale files (`public/i18n/{en,th,zh}.json`), the
+`CHANGE_SEAT.NO_SEATS` string was defined at the *top level* of `MY_BOOKINGS.CHANGE_SEAT`,
+but `change-seat-error.ts` maps `CHANGE_SEAT_ERROR_NO_SEATS → MY_BOOKINGS.CHANGE_SEAT.ERROR.NO_SEATS`.
+So `translate.instant('...ERROR.NO_SEATS')` resolved to `undefined` and the confirm banner
+would render the raw key `MY_BOOKINGS.CHANGE_SEAT.ERROR.NO_SEATS` to the user. I moved the
+already-translated string into the `ERROR` block (next to `SEAT_UNAVAILABLE`) in all three files.
+
+**Why it matters:** NO_SEATS is a RETURN_TO_MAP confirm error — the exact OBRS-83 lesson path.
+A raw i18n key on that banner is precisely the "looks broken to the user" failure the ticket
+called out. Unit tests did NOT catch it because `TranslateModule.forRoot()` with no loaded
+translations returns the key for BOTH a correct-but-untranslated key and a missing key — so
+`expect(...).toBe('MY_BOOKINGS.CHANGE_SEAT.ERROR.NO_SEATS')` passes either way.
+
+**Pattern for next time:** when adding an error-code→i18n map, verify each target key path
+against the actual JSON nesting, not just that *some* key with that leaf name exists. A quick
+`node -e "require('./en.json').MY_BOOKINGS.CHANGE_SEAT.ERROR.NO_SEATS"` per locale catches
+misplacement that key-presence greps and unit tests both miss.
+
+---
+
+## OBRS-96 QA (local-BE + local-FE against live SIT Supabase, 2026-07-10)
+
+**Setup that worked:** ran the backend worktree locally with `-Dspring-boot.run.profiles=sit`
+plus manually-exported env vars (DB_PASSWORD from `secrets.local.env`, TICKET_TOKEN_SECRET_KEY
+from the task brief, JWT/SendGrid/Omise/ThaiBulkSMS/Google values copied from the main clone's
+gitignored `application-local.yml`) — booted on port 8080 against the real SIT Supabase. FE
+served via bare `ng serve --port <random>` (NOT `npx playwright test`, whose own `webServer`
+tries `ng serve --configuration sit` on :4200 and fails — `environment.local.ts` doesn't exist
+in a fresh worktree, only the `.example`). `environment.base.ts`'s default `apiUrl` is
+`localhost:8000` but the backend's real default port is `8080` (docker-compose remaps to 8000,
+plain `mvn`/`spring-boot:run` does not) — edited `apiUrl` to 8080 for this run only, reverted
+after.
+
+**Real bug found — `boardedAt: null` in the boarding-scan success response:**
+`TicketRepository.updateBoardedByIdIfConfirmed` is a native `@Modifying` bulk UPDATE with no
+`clearAutomatically`/`flushAutomatically`. `TicketService.boardingScan` loads the `Ticket` via
+`findById` BEFORE the bulk update (to check `scheduleId`/status), so it's already in the
+persistence-context L1 cache; the immediately-following `findById` after the update returns the
+SAME stale managed instance instead of re-querying, so `boarded.getBoardedAt()` is `null` in the
+response even though the DB row is correctly stamped (verified directly via psql — `boarded_at`
+and `boarded_by` both set correctly). Reproduced twice (tickets 74 and 75, salesperson's own
+seed bookings on schedule 10 / today). Real user impact: `boarding-list-page.component.ts:187`
+merges `result.boardedAt` straight into the on-page row, so the just-scanned passenger's row
+shows a blank boarded-at until the list is refreshed/reloaded (a fresh GET re-queries and gets
+the right value). Fix would be `ticketRepository.flush()` + `entityManager.clear()` (or
+`@Modifying(clearAutomatically = true)`) between the update and the re-fetch in
+`TicketService.boardingScan`.
+
+**Confirmed via direct API (curl) against local-BE/live-SIT-DB, all matching contract:**
+happy-path scan 200 (passenger name + seat correct, boardedAt bug above), ALREADY_BOARDED 409,
+WRONG_SCHEDULE_TICKET 400, INVALID_TICKET_TOKEN 400, TICKET_NOT_CONFIRMED 409 (via real
+cancel-booking API on a sacrificial salesperson-owned booking, not raw SQL), customer role on
+`/boarding-scan` → 403 ACCESS_DENIED. Critically: **garbage/tampered token returns 400, never
+401** — the OBRS-187 regression guard holds at the API layer, and live-browser-confirmed too
+(staff stayed on `/staff/boarding/10`, no forced logout, after scanning a garbage token).
+
+**Scope correction — don't confuse the pre-existing `my-booking-ticket-modal` /
+`app-e-ticket-card` (My Bookings' "View e-ticket" action) with the actual OBRS-96 feature.**
+That modal is untouched by this branch (`git diff dev...HEAD --stat` confirms) and still passes
+ONE comma-joined `ticketNumber` string for the whole booking into a single QR — that is NOT a
+regression, it's just the wrong component to test. The real per-ticket QR lives in
+`e-ticket.component.html`'s `*ngFor="let passenger of passengers"` block, one `.ticket-card`
+per ticket with its own `passenger.qrDataUrl`/`ticketNumber`, and a `qrCardPlaceholder` template
+for `qrUnavailable` tickets (confirmed by source read) — but this page's `bookingId` comes from
+NgRx state set by `invokeSetBookingApi` during the live checkout/payment-result flow with NO
+localStorage persistence (`booking.effect.ts`'s `getBooking$` just echoes current store state,
+no HTTP call) — it cannot be deep-linked directly; reaching it live requires driving the full
+booking→payment flow. Did NOT complete that live within the 45-min box; verified structurally
+via source instead (see report). If a future session needs to live-verify this exact page,
+budget for the full search→seats→passenger-info→payment→e-ticket flow (see
+`obrs-booking-flow-playwright-capture` memory) rather than trying to reach it from
+"My Bookings".
+
+**`mapBoardingScanErrorCode`/`boardingScanErrorSeverity`/`boardingScanErrorIcon`
+(`boarding-scan-error.ts`) branch strictly on `error.error.errorCode`, never message text** —
+confirmed by source read, matches the live errorCodes observed above exactly (INVALID_TICKET_TOKEN,
+WRONG_SCHEDULE_TICKET, TICKET_NOT_CONFIRMED, ALREADY_BOARDED, plus EXPIRED_TICKET_TOKEN /
+BOARDING_WINDOW_NOT_OPEN which are time-dependent and not live-tested here — covered by BE unit
+tests per the task brief).
+
+---
+
+## OBRS-96 QA re-verify after the boardedAt fix (2026-07-10, second pass)
+
+**Both gaps from the first pass closed, live:**
+
+1. **boardedAt fix confirmed** (backend commit `20cc56f`, `@Modifying(clearAutomatically=true,
+   flushAutomatically=true)`): scanned a fresh ticket (id 81) via curl — response now returns
+   `"boardedAt":"2026-07-10T13:27:34..."` instead of `null`. Live-confirmed in the browser too:
+   scanned ticket 82 on the staff boarding-list page and the row showed `เช็คอินแล้ว` +
+   `เวลาขึ้นรถ: 13:28` **immediately, with no page reload** — screenshot
+   `05-scan-success-boardedAt-no-reload.png`.
+
+2. **Live-rendered the actual OBRS-96 per-ticket QR e-ticket page** (the headline feature, only
+   structurally verified in the first pass). Drove the full real booking flow as
+   `customer@system.local`: home search (หนองชาก → BTS หมอชิต, 2 adults) → seat selection (2
+   distinct seats, one per passenger, via the `.card-container.mt-3` per-passenger seat-van maps)
+   → passenger-info (booker + `useBookerInfo` copy for passenger 1, manual fill for passenger 2)
+   → payment with Omise test card `4242 4242 4242 4242` → landed on `/e-ticket`. Result: **2
+   passengers → 2 distinct QR codes**, each with its own `ticketNumber` (`T-2SPNB7S72Q` seat 6 /
+   `T-EES6CLCAHN` seat 7), passenger name, and a download button — screenshot
+   `06-e-ticket-page-HEADLINE.png`. Confirmed the QR encodes the real signed **boardingToken**
+   (not the ticket number) by re-fetching a token for the just-booked ticket 102 and scanning it
+   at the boarding-list endpoint — round-tripped correctly (see below).
+
+**Bonus finding — `BOARDING_WINDOW_NOT_OPEN` verified live** (was deferred as time-dependent in
+the first pass): the just-booked ticket 102 departs 2026-07-18 (today is 2026-07-10); scanning
+its real token on its real `scheduleId` (11) correctly rejected with 400
+`BOARDING_WINDOW_NOT_OPEN` ("Boarding is only allowed on the day of departure") rather than
+boarding it early.
+
+**Automation gotchas hit driving the full booking flow (useful for next time):**
+- **Seat inventory depletion across retries**: each abandoned/failed script attempt still
+  reserves seats on that schedule (no visible release), so repeated runs against the SAME
+  schedule burn through its free-seat count fast (schedule 10 today went from 7→0 free across a
+  few attempts; schedule 7 (2026-07-17) similarly). Pick a schedule with a healthy taken/free
+  ratio first — query `select count(*) from tickets where schedule_id=X and status in
+  (confirmed,checked_in,reserved)` vs. capacity — and expect to burn a few seats per debugging
+  iteration. Schedule 11 (2026-07-18) had only 3/13 taken and absorbed the successful run fine.
+- **Passenger seat maps**: `.card-container.mt-3` on the passenger-info page is NOT 1:1 with
+  passengers — index 0 is the booker card, index 1/2 are passenger 0/1's own seat-van maps.
+  Scope `.seat-box:not(.disabled)` inside the right card, re-querying live (not cached) right
+  before each click, since taking a seat in one map disables it in the other (shared inventory).
+- **The credit-card `p-calendar` (`view="month"`, `inputId="templatedisplay"`) resisted every
+  Playwright UI approach** (`#templatedisplay` click reported "element is not enabled"; the
+  panel's month cells were empty/unmatchable). Fastest reliable workaround: patch the Angular
+  reactive form directly via the dev-build's `window.ng.getComponent(...)` devtools API —
+  `ng.getComponent(document.querySelector('app-payment-creditcard')).creditCardForm.patchValue({expireDate: new Date(2027,11,1)})`
+  — then `markAsDirty()`/`updateValueAndValidity()`. This still exercises the REAL Omise
+  tokenization + real backend payment call + real e-ticket render; only the calendar-click UI
+  mechanic is bypassed. Legitimate for E2E capture, not for asserting the calendar widget itself
+  works (that's out of scope for a payment-flow smoke test).
+- **`FRONTEND_URL` env var on the local backend MUST match the FE's actual serve port** — Omise's
+  card 3DS flow (`.../authorize` → `.../complete`) redirects the real browser back to
+  `${app.frontend-url}/payment/result`; if `FRONTEND_URL` is stale (e.g. left at `:4200` from a
+  previous session while the FE is actually on a fresh random port like `:4267`), the post-3DS
+  redirect hits `ERR_CONNECTION_REFUSED` and the flow never reaches `/e-ticket`. Always set
+  `FRONTEND_URL` to the exact port the FE was just started on for this session, not a
+  remembered/default one.
+- The `.p-monthpicker`/`.p-datepicker-calendar` selectors from the pre-existing booking-flow
+  memory note (departure-date picker) worked fine as documented; it was specifically the credit
+  card's `view="month"` variant that was unreliable to automate.

@@ -1,0 +1,365 @@
+@import "../../../../../styles/variables.scss";
+
+.card-container {
+  width: 100%;
+  padding: $space-xl;
+  border-radius: 18px;
+  border: 1px solid $primary-lightgrey;
+  background: $primary-white;
+  box-shadow: 0 16px 40px rgba(64, 105, 184, 0.08);
+  box-sizing: border-box;
+}
+
+.payment-card {
+  display: flex;
+  flex-direction: column;
+  row-gap: $space-lg;
+
+  margin-top: 96px;
+}
+
+.tab-group {
+  display: flex;
+
+  flex-direction: row;
+  gap: $space-xs;
+
+  button {
+    width: 100%;
+  }
+
+  img {
+    display: flex;
+    align-items: center;
+  }
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  
+  gap: $space-3xs;
+  height: 54px;
+  border-radius: 14px;
+  border: 1px solid $primary-lightblue;
+  background: $primary-white;
+  color: $text-lightblack;
+  font-size: $font-size-xs;
+  font-weight: $font-weight-medium;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+
+  img {
+    width: 20px;
+    height: 20px;
+  }
+
+  &.is-active {
+    background: $primary-lightblue;
+    color: $primary-blue;
+    font-weight: $font-weight-semibold;
+    border-color: $primary-blue;
+    box-shadow: inset 0 0 0 1px rgba(64, 105, 184, 0.2);
+  }
+}
+
+.qr-panel {
+  border-radius: $radius-lg;
+  border: 1px solid $secondary-light-blue;
+  background: $secondary-grey;
+  padding: $space-lg;
+  display: flex;
+  flex-direction: column;
+  row-gap: $space-sm;
+}
+
+.qr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .qr-header-text {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .qr-title {
+    font-size: $font-size-sm;
+    font-weight: $font-weight-bold;
+    color: $primary-black;
+  }
+
+  .qr-subtitle {
+    font-size: $font-size-xs;
+    font-weight: $font-weight-semibold;
+    color: $text-blue;
+  }
+
+  .qr-logo {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.qr-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  row-gap: $space-xs;
+}
+
+.qr-frame {
+  width: min(240px, 100%);
+  aspect-ratio: 1 / 1;
+  border-radius: $radius-lg;
+  border: 10px solid $primary-white;
+  box-shadow: inset 0 0 0 1px rgba(13, 21, 37, 0.08);
+  background: $primary-white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.qr-placeholder {
+  width: 100%;
+  height: 100%;
+  border-radius: $radius-sm;
+  background-image: linear-gradient(
+      90deg,
+      rgba(13, 21, 37, 0.08) 50%,
+      transparent 50%
+    ),
+    linear-gradient(rgba(13, 21, 37, 0.08) 50%, transparent 50%);
+  background-size: 24px 24px;
+}
+
+.qr-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: $radius-sm;
+}
+
+.qr-amount {
+  font-size: clamp(24px, 8vw, 32px);
+  font-weight: $font-weight-bold;
+  color: $primary-black;
+  text-align: center;
+}
+
+.qr-countdown {
+  display: flex;
+  align-items: center;
+  gap: $space-2xs;
+  font-size: $font-size-sm;
+  color: $text-blue;
+
+  img {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.qr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  gap: $space-xs;
+}
+
+.btn-refresh {
+  border: 1px solid $primary-lightblue;
+  background: $primary-white;
+  color: $primary-blue;
+  border-radius: $radius-xl;
+  padding: $space-2xs 16px;
+  font-size: $font-size-sm;
+  font-weight: $font-weight-semibold;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+
+  &:hover:not(:disabled) {
+    background: $primary-lightblue;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    color: $text-lightgrey;
+    border-color: $primary-lightgrey;
+    background: $secondary-grey;
+  }
+}
+
+.refresh-hint {
+  font-size: $font-size-xs;
+  color: $text-lightgrey;
+}
+
+.qr-footer {
+  display: flex;
+  flex-direction: column;
+  row-gap: $space-3xs;
+  font-size: $font-size-sm;
+  color: $text-softblack;
+
+  .merchant-name {
+    font-weight: $font-weight-semibold;
+    color: $primary-black;
+  }
+
+  .merchant-ref {
+    overflow-wrap: anywhere;
+  }
+}
+
+.btn-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: $space-2xs;
+  height: 48px;
+  border-radius: $radius-xl;
+  background: $primary-blue;
+  color: $text-white;
+  font-size: $font-size-base;
+  font-weight: $font-weight-semibold;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease-in-out;
+
+  img {
+    width: 18px;
+    height: 18px;
+  }
+
+  &:hover {
+    opacity: 0.9;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+}
+
+.summary-wrapper {
+  app-payment-summary {
+    display: block;
+  }
+}
+
+.payment-btn {
+  background: $primary-blue;
+  color: white;
+  border: none;
+  border-radius: 26px;
+  padding: 6px 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.3s ease;
+
+  width: 100%;
+  height: 52px;
+
+  &:hover {
+    background: #0090d0;
+  }
+
+  &-diabled {
+    background: $primary-lightgrey;
+    cursor: not-allowed;
+
+    &:hover {
+      background: $primary-lightgrey;
+    }
+  }
+}
+
+.back-btn {
+  background: transparent;
+  color: $text-softblack;
+  border: 1px solid $primary-lightgrey;
+  border-radius: 26px;
+  padding: 6px 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.3s ease;
+
+  width: 100%;
+  height: 52px;
+}
+
+.payment-actions {
+  display: flex;
+  width: 100%;
+  gap: $space-2xs;
+  margin-top: 16px;
+}
+
+.payment-action-item {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.payment-action-item.action-end {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1024px) {
+  .card-container {
+    max-width: 100%;
+  }
+
+  .payment-card {
+    margin-top: 56px;
+  }
+}
+
+@media (max-width: 768px) {
+  .card-container {
+    padding: $space-md;
+    box-shadow: 0 10px 24px rgba(64, 105, 184, 0.06);
+  }
+
+  .payment-card {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 576px) {
+  .card-container {
+    padding: $space-sm;
+  }
+
+  .tab-group {
+    flex-direction: column;
+  }
+
+  .tab-group button {
+    width: 100%;
+  }
+
+  .qr-panel {
+    padding: $space-sm;
+  }
+
+  .qr-frame {
+    border-width: 8px;
+  }
+
+  .payment-actions {
+    flex-direction: column;
+    gap: $space-xs;
+  }
+
+  .payment-action-item,
+  .payment-action-item.action-end {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

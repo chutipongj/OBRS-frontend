@@ -53,6 +53,11 @@ button is green, and the date/time fields are **pill-shaped** while the dropdown
 
 ## 2. Design tokens
 
+> **The full value catalog is [`design-tokens.md`](./design-tokens.md)** — the concrete
+> color, **type, spacing, radius, elevation, and motion** scales (seeded in
+> `variables.scss`). This section defines the *color roles*; that file is the lookup
+> table for every scale. New/touched code references a token there, never a raw px/hex.
+
 **Rule:** components reference **tokens**, never raw hex. SCSS uses the
 `variables.scss` `$vars`; runtime-themed surfaces (admin/dark) use the
 `--accent*` CSS custom properties so light/dark switch for free.
@@ -70,7 +75,7 @@ rather than inlining a hex.
 | `surface` | page & card background | `$primary-white`, `--surface*` |
 | `text` | body text | `$text-black`, `$text-softblack` |
 | `muted` | secondary/placeholder text | `$text-lightgrey` |
-| `danger` | destructive / error | `$text-red: #cb393a` |
+| `danger` | destructive / error | SCSS `$text-red: #cb393a`; admin runtime `--admin-danger-bg` / `--admin-danger-text` / `--admin-danger-border` |
 | `border` | hairlines, input borders | `$primary-grey` |
 
 ### 2.3 Brand is per-shell (decision)
@@ -111,6 +116,7 @@ do not add a fourth.
 | **Select / dropdown in a form** | **`app-admin-dropdown`** | The only one with the placeholder-header contract (§3.1). Inputs: `[options]`, `[placeholder]`, `valueKey`, `labelKey`, `[icon]`, `[disabled]`, `formControlName`. |
 | Localized name dropdown (stop/route pickers with i18n labels) | `app-dropdown-obrs` | Legacy Bootstrap dropdown; **no placeholder support**. Keep only where it's already wired for localized names; do **not** use for new plain selects. |
 | Date / time | PrimeNG `p-calendar` (date), the existing time control | Keep the **single input shape** (§5). |
+| **Export trigger** (download current view as CSV/Excel) | **`app-export-button`** (`src/app/shared/components/export-button/`) | Presentational, self-sufficient: `[datasetKey]`, `[requiredRole]`, `[params]`. Renders a **secondary** `admin-btn` (never `admin-btn-primary` — exporting is a supporting action) that opens a `p-menu[popup]` with CSV / Excel items, following the trigger-popup pattern already used by `walk-in-trip-browser.component` (not `p-splitButton` — unused in this codebase). **Hidden** (not disabled) when `authService.hasAnyRole([requiredRole])` is false, matching the staff-layout/navbar role-gating precedent. Success is silent (the browser download is the confirmation); errors branch on `ExportError.errorCode` via `AlertService.error()`. See `docs/adr/0001-export-button-component.md`. |
 
 ### 3.1 Dropdown contract (this is what the Vehicle Type bug violated)
 
@@ -160,12 +166,17 @@ One color = one meaning. Never pick a button color for looks.
 
 ## 5. Inputs, shape, spacing
 
-- **One input shape: pill (decision).** Form controls are fully-rounded **pills**
-  (`border-radius: 999px`), matching the date/time fields. `app-admin-dropdown` now
-  renders its trigger as a pill (`admin-dropdown.component.scss`). New/touched inputs
-  (text, date, time, select) use the pill shape — don't reintroduce a square-cornered
-  control. (Open dropdown *menus*/popups stay rounded-rectangles; only the resting
-  control is a pill.)
+- **One input shape: pill (decision).** Single-line form controls are fully-rounded
+  **pills** (`border-radius: 999px`), matching the date/time fields. `app-admin-dropdown`
+  renders its trigger as a pill (`admin-dropdown.component.scss`) and the shared
+  `.admin-field` base (every admin `<input>` — text/date/number/email/…) is now a pill
+  too (`admin-theme.scss`, OBRS-122). New/touched single-line inputs use the pill shape —
+  don't reintroduce a square-cornered control. (Open dropdown *menus*/popups stay
+  rounded-rectangles; only the resting control is a pill.)
+- **Multi-line exception: textareas use a moderate radius, not the pill.** A literal
+  999px pill reads wrong on a tall multi-line box, so `textarea.admin-field` uses a
+  **moderate 12px** radius (`admin-theme.scss`, OBRS-122). This is the one deliberate
+  departure from the pill; keep single-line and multi-line consistent to these two.
 - Hairlines/dividers use `$primary-grey` via the shared `hr` rule (already global in
   `styles.scss`) — don't redefine border colors per component.
 - Font is **Sarabun** globally (set on `*` in `styles.scss`); icons are **Material
@@ -253,6 +264,18 @@ Run this against any UI diff (and during the live-verify screenshot glance):
       `errorCode` (§9).
 - [ ] **Shared components:** extended (optional null-default input), not forked;
       `@Input` arrays not mutated (§10).
+- [ ] **Status/state colors:** a new status/state pill color must read **distinctly**
+      against the **active accent variant's** resolved values (the admin shell is always
+      `theme-admin`, so `--accent*` resolves to *orange* there — it collides with
+      `new`/`is-warning`) **and** against the full existing status legend — never trust a
+      token's literal name (`--admin-success-*` is actually blue). Use a **fixed
+      `--admin-*` status token**, not the runtime `--accent*`; light bg + dark text with
+      **no one-sided dark-mode override** (overriding only the text kills contrast on the
+      unchanged bg). (OBRS-86 accent-collision + dark-contrast bugs.)
+- [ ] **Optimistic-open modals:** every control the modal patches after the fetch/cache
+      resolves is **pristine-guarded** (dirty-flag reset at the top of open, seeded on the
+      cache-hit branch, gated by the stale-response guard) so a late response can't clobber
+      an in-progress edit. (§6; CORE.md — recurred 3× on the usability-report detail modal.)
 - [ ] **New pattern?** justified in the UX spec and locked with a spec test (§12).
 
 ---
@@ -283,17 +306,31 @@ rewrite, but **do** resolve the relevant item whenever you touch a screen that h
 - [x] **Brand model decided: per-shell** (§2.3). Semantic tokens added in
       `variables.scss` (`$brand-customer*`); admin uses `var(--accent)`. The three
       "primary" colors are kept distinct **by design** — not unified into one.
-- [ ] **Repoint the remaining raw hexes** to shell tokens (3× `#0d6efd` staff borders,
-      non-admin `btn-primary`). Deferred deliberately: component SCSS doesn't import
-      `variables.scss` (it's a global stylesheet, no `includePaths`), so each repoint
-      needs a per-file `@use` — incremental "when you touch the file" work, not a sweep.
-- [ ] **Tokenize the staff brand green** into `$brand-staff` — it lives in the staff
-      shell-layout topbar (not the sell page); extract when next touching that layout.
+- [x] **Raw `#0d6efd` (Bootstrap blue) repointed to the shell accent** (OBRS-122): the
+      staff walk-in passenger-type tiles + trip-browser selection (`walk-in-center-panel`,
+      `walk-in-trip-browser`) and the admin routes selected-row (`routes-page`) now use
+      `var(--accent-strong)` / `var(--accent-soft)`, which cascade from `.admin-shell`
+      (theme-staff = teal-green, theme-admin = orange) — theme-safe, no raw hex.
+      **Still open:** non-admin `btn-primary` (Bootstrap blue) on staff/customer surfaces
+      (sell, staff-schedules, my-bookings, boarding-list) — a per-template class swap,
+      incremental "when you touch the file" work, not a sweep.
+- [x] **Admin danger hexes tokenized** (OBRS-122): `.admin-error` / `.admin-required`
+      → `var(--admin-danger-text)`, `.admin-field.is-invalid` → new
+      `--admin-danger-border` CSS var (both in `admin-theme.scss`) — the §2 `danger`
+      role, runtime-themed, no raw hex.
+- [x] **Staff brand color: carried by the runtime `theme-staff --accent*` tokens**
+      (OBRS-122). The staff topbar/chrome moved to the shared `.admin-shell` with the
+      teal-green `theme-staff` accent, so there is **no separate untokenized green hex**
+      to extract into a `$brand-staff` SCSS var; the staff shell identity is the
+      accent-variant system (like admin), consistent with §2.3. The Bootstrap `btn-success`
+      green on the Sell / Walk-in actions is left as `btn-*` convergence debt (below),
+      not a raw hex.
 - [ ] **Converge dropdowns** on `app-admin-dropdown`; retire ad-hoc selects, keep
       `app-dropdown-obrs` only for localized-name pickers.
-- [x] **One input shape decided: pill** (§5). `app-admin-dropdown` trigger now
-      `border-radius: 999px`, matching date/time. Migrate any remaining square inputs
-      incrementally.
+- [x] **One input shape done: pill** (§5, OBRS-122). `app-admin-dropdown` trigger and
+      the shared `.admin-field` single-line base are `border-radius: 999px`; `textarea`
+      is the moderate-12px multi-line exception. No square-vs-pill mix left on admin
+      inputs.
 - [x] **§3.1 locking specs added** (sell-page cold-open + admin create modals). §7/§8
       locks: verify/​add when next touching those shells.
 

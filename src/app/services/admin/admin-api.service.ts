@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { environment } from '../../../environments/environment';
 import { ResponseAPI } from '../../shared/interfaces/response.interface';
 import { Observable, of } from 'rxjs';
+import { map } from 'rxjs/operators';
 import {
   SKIP_GLOBAL_ERROR_ALERT,
   SKIP_GLOBAL_LOADING_ALERT,
@@ -17,6 +18,8 @@ import {
   UsabilityReportPage,
   UsabilityReportStatus,
 } from '../../shared/interfaces/usability-report.interface';
+import { ReportsSummaryDto } from '../../shared/interfaces/reports-summary.interface';
+import { DashboardTodayDto } from '../../shared/interfaces/dashboard-today.interface';
 
 export interface AdminTranslationDto {
   locale?: string;
@@ -482,6 +485,63 @@ export interface DriverDto {
   name: string;
 }
 
+// OBRS-85: round-trip discount promotion (a singleton config row, slug
+// 'round_trip'). Amount fields come back as BigDecimal on the backend, which
+// Jackson can serialize as either a JSON number or a numeric string depending
+// on config — typed as `number | string` like AdminBookingDto.totalAmount, and
+// coerced with Number(...) by the consuming page.
+export interface PromotionRespDto {
+  id: number;
+  slug?: string;
+  code?: string;
+  discountType?: string | AdminStatusDto;
+  status?: string | AdminStatusDto;
+  discountValue?: number | string;
+  // OBRS-109 (#37): full CRUD adds these — always present on the general
+  // list/detail endpoints, but optional here since the round-trip singleton
+  // endpoint (OBRS-85) predates them and this DTO is shared by both.
+  maxDiscountAmount?: number | string | null;
+  minBookingAmount?: number | string;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  usageLimit?: number | null;
+  currentUsage?: number;
+  autoApply?: boolean;
+  translations?: AdminTranslationCollection;
+}
+
+// OBRS-109 (#37): full-replace payload for the general promotion CRUD
+// endpoints (distinct from UpdateRoundTripPromotionPayload's partial PATCH
+// contract, which stays scoped to the round-trip singleton row).
+export interface PromotionReqDto {
+  slug: string;
+  code: string;
+  discountType: string;
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount?: number | null;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  usageLimit?: number | null;
+  status: string;
+  autoApply: boolean;
+  translations: AdminTranslationReqDto[];
+}
+
+// Partial payload — the promotions page only sends fields the admin actually
+// changed (design-system.md: don't overwrite fields the user didn't touch).
+// NOTE: the backend's RoundTripPromotionReqDto reads `active: boolean`, NOT a
+// `status` string — Spring silently drops unknown fields, so this must match
+// the wire contract exactly, even though PromotionRespDto (and the store) use
+// `status`. The page translates active<->status at its edges.
+export interface UpdateRoundTripPromotionPayload {
+  discountValue?: number;
+  active?: boolean;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  minBookingAmount?: number;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -516,6 +576,10 @@ export class AdminApiService {
 
   private putRequest<T>(url: string, payload: unknown): Observable<ResponseAPI<T>> {
     return this.http.put<ResponseAPI<T>>(url, payload, this.toRequestOptions());
+  }
+
+  private patchRequest<T>(url: string, payload: unknown): Observable<ResponseAPI<T>> {
+    return this.http.patch<ResponseAPI<T>>(url, payload, this.toRequestOptions());
   }
 
   private deleteRequest<T>(url: string): Observable<ResponseAPI<T>> {
@@ -795,6 +859,33 @@ export class AdminApiService {
     );
   }
 
+  getReportsSummary(from: string, to: string): Observable<ResponseAPI<ReportsSummaryDto>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.getRequest<ReportsSummaryDto>(
+      `${this.baseUrl}/private/admin/reports/summary`,
+      params
+    );
+  }
+
+  getDashboardToday(): Observable<ResponseAPI<DashboardTodayDto>> {
+    return this.getRequest<DashboardTodayDto>(`${this.baseUrl}/private/admin/dashboard/today`);
+  }
+
+  // Backs the admin sidebar's "Usability Reports" nav badge — reuses the
+  // existing list endpoint with size=1 so only the pagination envelope
+  // (data.totalElements) is needed, not the report rows themselves.
+  getNewUsabilityReportCount(): Observable<number> {
+    const params = new HttpParams()
+      .set('status', 'new')
+      .set('size', '1')
+      .set('page', '0');
+
+    return this.getRequest<UsabilityReportPage>(
+      `${this.baseUrl}/private/admin/usability-reports`,
+      params
+    ).pipe(map((response) => response.data?.totalElements ?? 0));
+  }
+
   getUsabilityReportById(id: string): Observable<ResponseAPI<UsabilityReportDetail>> {
     return this.getRequest<UsabilityReportDetail>(
       `${this.baseUrl}/private/admin/usability-reports/${id}`
@@ -803,11 +894,52 @@ export class AdminApiService {
 
   updateUsabilityReportStatus(
     id: string,
-    status: UsabilityReportStatus
+    status: UsabilityReportStatus,
+    triageNote: string | null
   ): Observable<ResponseAPI<unknown>> {
     return this.putRequest<unknown>(
       `${this.baseUrl}/private/admin/usability-reports/${id}/status`,
-      { status }
+      { status, triageNote }
     );
+  }
+
+  // OBRS-85: the round-trip promotion is a singleton config row (slug
+  // 'round_trip'), so there is no {id} in the path.
+  getRoundTripPromotion(): Observable<ResponseAPI<PromotionRespDto>> {
+    return this.getRequest<PromotionRespDto>(`${this.baseUrl}/private/admin/promotions/round-trip`);
+  }
+
+  updateRoundTripPromotion(
+    payload: UpdateRoundTripPromotionPayload
+  ): Observable<ResponseAPI<unknown>> {
+    return this.patchRequest<unknown>(
+      `${this.baseUrl}/private/admin/promotions/round-trip`,
+      payload
+    );
+  }
+
+  // OBRS-109 (#37): full promotion CRUD across every promotion row (the
+  // round-trip singleton above is a separate, narrower endpoint and is left
+  // untouched). Contract not yet documented in OBRS-backend/docs/api — built
+  // against the SA-locked shape and flagged in docs/handoff.md, same pattern
+  // used for the round-trip endpoints in OBRS-85 before they landed.
+  getPromotions(): Observable<ResponseAPI<PromotionRespDto[]>> {
+    return this.getRequest<PromotionRespDto[]>(`${this.baseUrl}/private/admin/promotions`);
+  }
+
+  getPromotionById(id: number): Observable<ResponseAPI<PromotionRespDto>> {
+    return this.getRequest<PromotionRespDto>(`${this.baseUrl}/private/admin/promotions/${id}`);
+  }
+
+  createPromotion(payload: PromotionReqDto): Observable<ResponseAPI<unknown>> {
+    return this.postRequest<unknown>(`${this.baseUrl}/private/admin/promotions`, payload);
+  }
+
+  updatePromotion(id: number, payload: PromotionReqDto): Observable<ResponseAPI<unknown>> {
+    return this.putRequest<unknown>(`${this.baseUrl}/private/admin/promotions/${id}`, payload);
+  }
+
+  deletePromotion(id: number): Observable<ResponseAPI<unknown>> {
+    return this.deleteRequest<unknown>(`${this.baseUrl}/private/admin/promotions/${id}`);
   }
 }

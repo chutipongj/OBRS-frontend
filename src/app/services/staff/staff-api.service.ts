@@ -3,7 +3,15 @@ import { HttpClient, HttpContext, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { ResponseAPI } from '../../shared/interfaces/response.interface';
-import { SKIP_GLOBAL_ERROR_ALERT, SKIP_GLOBAL_LOADING_ALERT } from '../../shared/interceptors/http-context-tokens';
+import {
+  SKIP_AUTH_LOGOUT,
+  SKIP_GLOBAL_ERROR_ALERT,
+  SKIP_GLOBAL_LOADING_ALERT,
+} from '../../shared/interceptors/http-context-tokens';
+import {
+  BoardingScanRequest,
+  BoardingScanResultDto,
+} from '../../shared/interfaces/ticket-boarding.interface';
 import { DriverDto } from '../admin/admin-api.service';
 
 export interface ScheduleSearchReqDto {
@@ -105,6 +113,19 @@ export interface RouteSegmentsDto {
   popularDropoffStops: PopularStopDto[];
 }
 
+/** One canonical route stop with its order and cumulative time offset from the origin. */
+export interface RouteStopTimeDto {
+  stopOrder: number;
+  offsetMinutesFromOrigin: number;
+  distanceKmFromOrigin?: number;
+  /** LookupResponse — `code` is the stop slug used to join with segment stops. */
+  stop: { code: string };
+}
+
+export interface RouteStopsDto {
+  stops: RouteStopTimeDto[];
+}
+
 export interface WalkInBookingReqDto {
   bookingType: 'one_way' | 'return';
   totalAmount: number;
@@ -117,6 +138,13 @@ export interface WalkInBookingReqDto {
 export interface WalkInBookingRespDto {
   bookingId: number;
   bookingNumber: string;
+  // OBRS-85: parity with CreateBookingResponse (booking.interface.ts). Dormant
+  // today — every walk-in sale is bookingType:'one_way', so the backend never
+  // populates a discount here; kept for forward-compat with a future walk-in
+  // round-trip flow.
+  totalAmount?: number;
+  discountAmountSnapshot?: number;
+  netAmount?: number;
 }
 
 export interface WalkInPaymentReqDto {
@@ -131,6 +159,10 @@ export interface WalkInPaymentRespDto {
   status: string;
   paymentMethod: string;
   amount: number;
+  // OBRS-85: same parity/dormant fields as WalkInBookingRespDto.
+  totalAmount?: number;
+  discountAmountSnapshot?: number;
+  netAmount?: number;
 }
 
 export interface BoardingListItemDto {
@@ -144,6 +176,9 @@ export interface BoardingListItemDto {
     code: string;
     label: string;
   };
+  /** OBRS-96: populated once the ticket has been boarded via the manual
+   * boarding-scan box (undefined until then — additive, optional field). */
+  boardedAt?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -173,6 +208,25 @@ export class StaffApiService {
       `${environment.apiUrl}/api/private/tickets/${ticketId}/check-in`,
       {},
       { context: this.skipContext }
+    );
+  }
+
+  // OBRS-96: manual boarding-scan validation (staff/operator, text-entry
+  // token — camera scanning is out of scope for this card). SKIP_AUTH_LOGOUT
+  // is set here in ADDITION to the shared skipContext, mirroring
+  // booking.service.ts / promotion.service.ts, as defense-in-depth against
+  // the OBRS-187 force-logout bug even though the backend guarantees a
+  // domain 400/409 (never a bare 401) for every rejected scan.
+  private readonly boardingScanContext = new HttpContext()
+    .set(SKIP_GLOBAL_ERROR_ALERT, true)
+    .set(SKIP_GLOBAL_LOADING_ALERT, true)
+    .set(SKIP_AUTH_LOGOUT, true);
+
+  boardingScan(request: BoardingScanRequest): Observable<ResponseAPI<BoardingScanResultDto>> {
+    return this.http.post<ResponseAPI<BoardingScanResultDto>>(
+      `${environment.apiUrl}/api/private/tickets/boarding-scan`,
+      request,
+      { context: this.boardingScanContext }
     );
   }
 
@@ -214,6 +268,17 @@ export class StaffApiService {
   getRouteSegments(routeSlug: string): Observable<ResponseAPI<RouteSegmentsDto>> {
     return this.http.get<ResponseAPI<RouteSegmentsDto>>(
       `${environment.apiUrl}/api/private/segments/${encodeURIComponent(routeSlug)}`,
+      { context: this.skipContext }
+    );
+  }
+
+  // Canonical ordered stops for a route with each stop's cumulative time offset
+  // from the origin (GET /api/private/route-stops/{slug}) — the authoritative
+  // source for stop ordering and estimated per-stop times on the walk-in sell
+  // page. Salesperson-authorized.
+  getRouteStops(routeSlug: string): Observable<ResponseAPI<RouteStopsDto>> {
+    return this.http.get<ResponseAPI<RouteStopsDto>>(
+      `${environment.apiUrl}/api/private/route-stops/${encodeURIComponent(routeSlug)}`,
       { context: this.skipContext }
     );
   }

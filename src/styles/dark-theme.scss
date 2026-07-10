@@ -213,6 +213,23 @@ body.is-dark {
   .login-container {
     background: $dk-bg;
 
+    // Ambient brand backdrop — fainter on the dark page so the light-blue
+    // illustration doesn't read as a muddy patch (blur dilutes it further).
+    .login-bg {
+      opacity: 0.08;
+    }
+
+    // Centered auth card (design-system §12 login pattern) — a dark surface
+    // so the card doesn't read as a white block on the dark page. !important
+    // beats the component-scoped `.login-card` background (its attribute
+    // selector otherwise out-specifies this rule — same reason .form-control
+    // above needs it).
+    .login-card {
+      background: $dk-bg-card !important;
+      border: 1px solid $dk-border;
+      box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45) !important;
+    }
+
     .welcome-text,
     .hint-text {
       color: $dk-text;
@@ -242,6 +259,19 @@ body.is-dark {
     background-color: $dk-bg-card;
     color: $dk-text;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  // My-bookings action-menu disabled-reason tooltip — same dark treatment as
+  // `.tooltip-box` above (the menu popup is appendTo="body", so it lives under
+  // `body.is-dark` here rather than inside the component's encapsulation).
+  .my-bookings-action-menu .action-menu-item__tooltip {
+    background-color: $dk-bg-card;
+    color: $dk-text;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+
+    &::after {
+      border-left-color: $dk-bg-card;
+    }
   }
 }
 

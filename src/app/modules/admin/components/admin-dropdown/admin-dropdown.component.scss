@@ -1,3 +1,4 @@
+@import "../../../../../styles/variables.scss";
 :host {
   display: block;
   min-width: 180px;
@@ -14,11 +15,13 @@
   justify-content: space-between;
   width: 100%;
   min-height: 40px;
-  gap: 12px;
+  gap: $space-xs;
   border: 1px solid rgba(189, 200, 207, 0.35);
-  border-radius: 999px; // design-system §5: single input shape = pill, matches date/time fields
-  background: #ffffff;
-  color: #191c1e;
+  border-radius: $radius-pill; // design-system §5: single input shape = pill, matches date/time fields
+  // dark-mode (OBRS-127): theme with the shell surface/text tokens instead of raw
+  // hex, so the trigger follows light/dark like .admin-field does.
+  background: var(--admin-surface-card);
+  color: var(--admin-text);
   cursor: pointer;
   padding: 0 14px;
   text-align: left;
@@ -36,9 +39,9 @@
   align-items: center;
   min-width: 0;
   gap: 10px;
-  color: #191c1e;
+  color: var(--admin-text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: $font-weight-bold;
 }
 
 .admin-dropdown-value span:last-child {
@@ -51,7 +54,7 @@
 .admin-dropdown-arrow {
   flex: 0 0 auto;
   color: #006687;
-  font-size: 20px;
+  font-size: $font-size-lg;
 }
 
 .admin-dropdown-arrow {
@@ -73,10 +76,10 @@
   min-width: 220px;
   max-height: 280px;
   overflow-y: auto;
-  padding: 8px;
+  padding: $space-2xs;
   border: 1px solid rgba(189, 200, 207, 0.3);
-  border-radius: 12px;
-  background: #ffffff;
+  border-radius: $radius-md;
+  background: var(--admin-surface-card); // dark-mode (OBRS-127): match the shell surface
   box-shadow: 0 12px 32px rgba(25, 28, 30, 0.08);
 }
 
@@ -86,11 +89,11 @@
   justify-content: space-between;
   width: 100%;
   min-height: 44px;
-  gap: 12px;
+  gap: $space-xs;
   border: 0;
-  border-radius: 8px;
+  border-radius: $radius-sm;
   background: transparent;
-  color: #191c1e;
+  color: var(--admin-text);
   cursor: pointer;
   padding: 10px 12px;
   text-align: left;
@@ -104,13 +107,13 @@
 .admin-dropdown-option.is-selected {
   background: rgba(193, 232, 255, 0.55);
   color: #006687;
-  font-weight: 800;
+  font-weight: $font-weight-extrabold;
 }
 
 .admin-dropdown-check {
   flex: 0 0 auto;
   color: #006687;
-  font-size: 18px;
+  font-size: $font-size-md;
 }
 
 .admin-dropdown.is-disabled {

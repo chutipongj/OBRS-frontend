@@ -1,22 +1,22 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
-import { Store } from '@ngrx/store';
-import { Subject, firstValueFrom, take } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
+import { Subject, firstValueFrom, forkJoin, of, take } from 'rxjs';
+import { catchError, takeUntil } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
 import dayjs from 'dayjs';
 import { AlertService } from '../../../../shared/services/alert.service';
 import { extractApiErrorMessage } from '../../../../shared/lib/api-error';
 import { combineBangkokDateTime } from '../../../../shared/lib/api-date-time';
+import { normalizeSeatNumber } from '../../../../shared/lib/seat-number';
 import {
   PopularStopDto,
-  SegmentStopPairDto,
+  RouteStopsDto,
   SegmentStopRefDto,
   StaffApiService,
   WalkInRouteGroupDto,
   WalkInTripDto,
 } from '../../../../services/staff/staff-api.service';
+import { ResponseAPI } from '../../../../shared/interfaces/response.interface';
 import {
   AdminApiService,
   AdminScheduleDto,
@@ -24,7 +24,6 @@ import {
   getAdminLookupLabel,
   getAdminTranslationLabel,
 } from '../../../../services/admin/admin-api.service';
-import { invokeSetBookingApi } from '../../../../shared/stores/booking/booking.action';
 import { generateIdempotencyKey } from '../../../../shared/lib/idempotency-key';
 import { WalkInCheckoutPayload } from '../../components/walk-in-checkout/walk-in-checkout.component';
 import { WalkInTripSelection } from '../../components/walk-in-trip-browser/walk-in-trip-browser.component';
@@ -66,6 +65,11 @@ export class SellPageComponent implements OnInit, OnDestroy {
   protected popularPickupStops: StopOption[] = [];
   protected popularDropoffStops: StopOption[] = [];
   private fareMap = new Map<string, number>();
+  // Authoritative per-stop ordering + time offset from the route-stops endpoint
+  // (GET /api/private/route-stops/{slug}), keyed by stop slug. Replaces
+  // reconstructing route shape/timing from the sellable segment-pair graph.
+  private stopOrderMap = new Map<string, number>();
+  private stopOffsetMap = new Map<string, number>();
 
   private idempotencyKey: string | null = null;
   private readonly destroy$ = new Subject<void>();
@@ -88,8 +92,6 @@ export class SellPageComponent implements OnInit, OnDestroy {
   protected scheduleDriverOptions: { code: string; label: string }[] = [];
 
   constructor(
-    private readonly router: Router,
-    private readonly store: Store,
     private readonly staffApiService: StaffApiService,
     private readonly alertService: AlertService,
     private readonly translate: TranslateService,
@@ -274,7 +276,16 @@ export class SellPageComponent implements OnInit, OnDestroy {
         // Use the per-seat type captured at click time; fall back to the current
         // global type if somehow the seat isn't in the map.
         passengerType: this.seatPassengerTypes[seat] ?? this.selectedPassengerType,
-        seatNumber: seat,
+        // The seat maps render/select letter-prefixed labels (van "A1".."A13", bus
+        // "B1".."B21" — see `selectedSeats` / `busSeatLabels` in
+        // WalkInCenterPanelComponent), but the booking endpoint's
+        // `availableSeatNumbers`/`tickets.seat_number` are bare digits (OBRS-179:
+        // the walk-in van path 400'd with BOOKING_ERROR_SEATS_NOT_FOUND because the
+        // raw label was sent as-is). Normalize here, at the payload boundary, the
+        // same way the customer booking flow already does
+        // (`PassengerInfoComponent.normalizeSeatNumber`) — display state
+        // (`selectedSeats`, seat-map highlighting) keeps the label form.
+        seatNumber: normalizeSeatNumber(seat),
         title: payload.contact.title,
         firstName: payload.contact.firstName,
         lastName: payload.contact.lastName,
@@ -365,15 +376,18 @@ export class SellPageComponent implements OnInit, OnDestroy {
                 this.idempotencyKey = null;
                 this.selectedSeats = [];
                 this.seatPassengerTypes = {};
-                // Silently refresh trips list
+                // Staff POS: do NOT navigate to /e-ticket — it's a customerArea
+                // route, so AuthGuard bounces staff to their home and leaves the
+                // just-sold seat showing as available on the now-stale seat map
+                // (OBRS-188). Confirm in place and reload so the seat map + the
+                // trip row's sold-count badge reflect the sale.
+                this.selectedTrip = null;
                 this.loadTrips(this.selectedDate);
-                // Navigate to e-ticket
-                this.store.dispatch(
-                  invokeSetBookingApi({
-                    booking: { bookingId: bId, bookingNumber: bNum ?? '' },
+                void this.alertService.success(
+                  this.translate.instant('STAFF.SELL.SOLD_SUCCESS', {
+                    bookingNumber: bNum ?? '',
                   })
                 );
-                void this.router.navigate(['/e-ticket']);
               },
               error: (err: unknown) => {
                 this.isSelling = false;
@@ -415,17 +429,11 @@ export class SellPageComponent implements OnInit, OnDestroy {
       code: String(v.id),
       label: v.vehicleNumber ?? v.numberPlate ?? `#${v.id}`,
     }));
-    this.scheduleDriverOptions = data.users
-      .filter((u) =>
-        (u.roles ?? []).some((role) => {
-          const slug = typeof role === 'string' ? role : role.slug;
-          return String(slug ?? '').trim().toLowerCase() === 'driver';
-        })
-      )
-      .map((u) => ({
-        code: String(u.id),
-        label: u.fullName?.trim() || u.email?.trim() || `#${u.id}`,
-      }));
+    // Drivers already come pre-filtered from /private/users/drivers (OBRS-175).
+    this.scheduleDriverOptions = data.drivers.map((d) => ({
+      code: String(d.id),
+      label: d.name?.trim() || `#${d.id}`,
+    }));
 
     // Cold-open fix: if the create form is open and route is still blank+pristine
     // (store wasn't loaded yet when the modal opened), apply the first-option default
@@ -742,17 +750,40 @@ export class SellPageComponent implements OnInit, OnDestroy {
     this.isLoadingSegments = true;
     const vehicleType = trip.vehicleType ?? null;
 
-    this.staffApiService
-      .getRouteSegments(routeSlug)
+    forkJoin({
+      segments: this.staffApiService.getRouteSegments(routeSlug),
+      // Route-stops give authoritative ordering + per-stop time offsets. Treat a
+      // failure/absence as non-fatal — the stop list still renders from segments
+      // (order falls back to insertion order, times blank) instead of breaking.
+      routeStops: this.staffApiService.getRouteStops(routeSlug).pipe(
+        catchError(() =>
+          of<ResponseAPI<RouteStopsDto>>({ code: 200, message: 'OK', data: { stops: [] } })
+        )
+      ),
+    })
       .pipe(takeUntil(this.destroy$))
       .subscribe({
-        next: (resp) => {
+        next: ({ segments, routeStops }) => {
           if (this.selectedRouteSlug !== routeSlug) return;
-          const allPairs = resp?.data?.stopPairs ?? [];
+          const allPairs = segments?.data?.stopPairs ?? [];
           const typed = vehicleType
             ? allPairs.filter((p) => p.vehicleType?.slug === vehicleType)
             : allPairs;
           const pairs = typed.length > 0 ? typed : allPairs;
+
+          // Authoritative order + time offset per stop (route-stops uses `code` as the slug).
+          this.stopOrderMap = new Map<string, number>();
+          this.stopOffsetMap = new Map<string, number>();
+          for (const rs of routeStops?.data?.stops ?? []) {
+            const slug = rs.stop?.code;
+            if (!slug) continue;
+            if (typeof rs.stopOrder === 'number') {
+              this.stopOrderMap.set(slug, rs.stopOrder);
+            }
+            if (typeof rs.offsetMinutesFromOrigin === 'number') {
+              this.stopOffsetMap.set(slug, rs.offsetMinutesFromOrigin);
+            }
+          }
 
           this.fareMap = new Map<string, number>();
           for (const p of pairs) {
@@ -762,12 +793,12 @@ export class SellPageComponent implements OnInit, OnDestroy {
               Number.isFinite(fare) ? fare : 0
             );
           }
-          this._buildStopTimes(pairs, trip);
           this.orderedStops = this._buildOrderedStops(pairs);
+          this._buildStopTimes(trip);
           this._applyDefaultStops(preserve);
 
-          const rawPopularPickup: PopularStopDto[] = resp?.data?.popularPickupStops ?? [];
-          const rawPopularDropoff: PopularStopDto[] = resp?.data?.popularDropoffStops ?? [];
+          const rawPopularPickup: PopularStopDto[] = segments?.data?.popularPickupStops ?? [];
+          const rawPopularDropoff: PopularStopDto[] = segments?.data?.popularDropoffStops ?? [];
           this.popularPickupStops = rawPopularPickup.map(s => ({ slug: s.slug, name: s.name, time: this.stopTime(s.slug) }));
           this.popularDropoffStops = rawPopularDropoff.map(s => ({ slug: s.slug, name: s.name, time: this.stopTime(s.slug) }));
 
@@ -780,40 +811,22 @@ export class SellPageComponent implements OnInit, OnDestroy {
       });
   }
 
-  // Map of stop slug → computed HH:mm time string (derived from departure + cumulative durations).
+  // Map of stop slug → computed HH:mm time string (departure + route offset).
   private stopTimeMap = new Map<string, string>();
 
-  private _buildStopTimes(
-    pairs: SegmentStopPairDto[],
-    trip: WalkInTripDto
-  ): void {
+  /**
+   * Each stop's clock time = the schedule's departure + that stop's
+   * offsetMinutesFromOrigin (from the route-stops endpoint). Every stop on the
+   * route carries an offset, so pickup and drop-off stops alike get a correct
+   * time — no chain reconstruction and no cascade blanking (the old segment-graph
+   * approach could only time stops the origin had a direct fare segment to, which
+   * left every parallel pickup point blank).
+   */
+  private _buildStopTimes(trip: WalkInTripDto): void {
     this.stopTimeMap = new Map<string, string>();
-    const ordered = this._buildOrderedStops(pairs);
-    if (ordered.length === 0) return;
-
     const departure = dayjs(trip.departureDateTime);
-    let cumulativeMinutes = 0;
-    // Once a leg's duration is missing, every downstream time becomes unreliable
-    // (we'd under-count by the skipped leg), so blank the rest of the chain.
-    let chainBroken = false;
-    this.stopTimeMap.set(ordered[0].slug, departure.format('HH:mm'));
-
-    for (let i = 1; i < ordered.length; i++) {
-      const prev = ordered[i - 1];
-      const curr = ordered[i];
-      // Find a direct consecutive pair.
-      const pair = pairs.find(
-        (p) => p.fromStop.slug === prev.slug && p.toStop.slug === curr.slug
-      );
-      if (!chainBroken && pair && typeof pair.estimatedDurationMinutes === 'number' && pair.estimatedDurationMinutes > 0) {
-        cumulativeMinutes += pair.estimatedDurationMinutes;
-        this.stopTimeMap.set(curr.slug, departure.add(cumulativeMinutes, 'minute').format('HH:mm'));
-      } else {
-        // Can't determine this leg's duration → drop this stop's time and all
-        // downstream ones rather than showing a too-early (under-counted) time.
-        chainBroken = true;
-        this.stopTimeMap.set(curr.slug, '');
-      }
+    for (const [slug, offset] of this.stopOffsetMap) {
+      this.stopTimeMap.set(slug, departure.add(offset, 'minute').format('HH:mm'));
     }
   }
 
@@ -822,21 +835,23 @@ export class SellPageComponent implements OnInit, OnDestroy {
     return this.stopTimeMap.get(slug) ?? '';
   }
 
-  /** Order stops by in-degree (count of distinct upstream pickups). */
+  /**
+   * Sellable stops (those appearing in the segment pairs) ordered by the route's
+   * canonical `stop_order`. Stops missing from route-stops sort last (stable) so
+   * an incomplete route-stops set never scrambles the known sequence.
+   */
   private _buildOrderedStops(
     pairs: { fromStop: SegmentStopRefDto; toStop: SegmentStopRefDto }[]
   ): SegmentStopRefDto[] {
     const stops = new Map<string, SegmentStopRefDto>();
-    const upstream = new Map<string, Set<string>>();
     for (const p of pairs) {
       stops.set(p.fromStop.slug, p.fromStop);
       stops.set(p.toStop.slug, p.toStop);
-      const set = upstream.get(p.toStop.slug) ?? new Set<string>();
-      set.add(p.fromStop.slug);
-      upstream.set(p.toStop.slug, set);
     }
     return Array.from(stops.values()).sort(
-      (a, b) => (upstream.get(a.slug)?.size ?? 0) - (upstream.get(b.slug)?.size ?? 0)
+      (a, b) =>
+        (this.stopOrderMap.get(a.slug) ?? Number.MAX_SAFE_INTEGER) -
+        (this.stopOrderMap.get(b.slug) ?? Number.MAX_SAFE_INTEGER)
     );
   }
 
@@ -873,6 +888,8 @@ export class SellPageComponent implements OnInit, OnDestroy {
   private _resetSegments(): void {
     this.orderedStops = [];
     this.fareMap = new Map<string, number>();
+    this.stopOrderMap = new Map<string, number>();
+    this.stopOffsetMap = new Map<string, number>();
     this.pickupSlug = '';
     this.dropoffSlug = '';
     this.stopTimeMap = new Map<string, string>();

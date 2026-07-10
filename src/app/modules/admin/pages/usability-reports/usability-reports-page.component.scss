@@ -1,8 +1,16 @@
+@import "../../../../../styles/variables.scss";
 .ur-description-cell {
   max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+// The whole row is a mouse affordance for opening Report Detail (keyboard/AT
+// users use the View button). The hover background is already provided globally
+// by `.admin-table tbody tr:hover`; here we only add the pointer cursor.
+.ur-report-row {
+  cursor: pointer;
 }
 
 // ── Detail modal ──────────────────────────────────────────────────────────────
@@ -13,25 +21,55 @@
   overflow-y: auto;
 }
 
-.ur-detail-loading {
-  padding: 24px;
-  text-align: center;
+.admin-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+// Top-right × close affordance (design-system.md §6).
+.ur-detail-close {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--admin-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ur-detail-close:hover {
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .ur-detail-body {
   padding: 0 4px;
 }
 
+.ur-inline-updating {
+  margin-left: 6px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--admin-muted);
+}
+
 .ur-detail-row {
   display: flex;
-  gap: 12px;
+  gap: $space-xs;
   padding: 6px 0;
   border-bottom: 1px solid var(--bs-border-color, #dee2e6);
   align-items: flex-start;
 }
 
 .ur-detail-label {
-  font-weight: 600;
+  font-weight: $font-weight-semibold;
   min-width: 130px;
   font-size: 0.875rem;
   color: var(--bs-secondary-color, #6c757d);
@@ -43,9 +81,35 @@
   word-break: break-all;
 }
 
+// OBRS-115: "reporter notified" indicator — a soft success pill next to the
+// dispatch timestamp. Uses the admin success tokens (with graceful hex fallbacks
+// matching this file's `var(--…, #hex)` convention) so it reads positive and
+// stays theme-aware in dark mode.
+.ur-notified-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--admin-success-text, #0f5132);
+}
+
+.ur-notified-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--admin-success-soft, #d1e7dd);
+  color: var(--admin-success-text, #0f5132);
+  font-size: 0.7rem;
+  font-weight: $font-weight-semibold;
+}
+
 .ur-detail-description {
   p.ur-detail-label {
-    font-weight: 600;
+    font-weight: $font-weight-semibold;
     font-size: 0.875rem;
     color: var(--bs-secondary-color, #6c757d);
     margin-bottom: 6px;
@@ -59,7 +123,7 @@
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 0.9rem;
-  line-height: 1.5;
+  line-height: $line-height-base;
 }
 
 // ── Images ────────────────────────────────────────────────────────────────────
@@ -67,13 +131,13 @@
 .ur-images-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: $space-xs;
 }
 
 .ur-image-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: $space-3xs;
   width: 120px;
 }
 
@@ -83,6 +147,13 @@
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid var(--bs-border-color, #dee2e6);
+  cursor: pointer;
+}
+
+.ur-image-thumb:hover,
+.ur-image-thumb:focus-visible {
+  border-color: var(--accent);
+  outline: none;
 }
 
 .ur-image-meta {
@@ -92,11 +163,49 @@
   color: var(--bs-secondary-color, #6c757d);
 }
 
+// ── Lightbox overlay ──────────────────────────────────────────────────────────
+// A separate layer above the detail modal (design-system.md §6): reuses the
+// existing .admin-modal-backdrop surface but stacks above it and has no inner
+// .admin-modal, so the shared backdrop directive isn't applicable here — ESC
+// is still handled because it's routed through the detail modal's directive.
+
+.ur-lightbox-backdrop {
+  z-index: 1300;
+  flex-direction: column;
+}
+
+.ur-lightbox-image {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.ur-lightbox-close {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(25, 28, 30, 0.55);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+
+.ur-lightbox-close:hover {
+  background: rgba(25, 28, 30, 0.75);
+}
+
 // ── Status update controls ────────────────────────────────────────────────────
 
 .ur-status-update {
   p.ur-detail-label {
-    font-weight: 600;
+    font-weight: $font-weight-semibold;
     font-size: 0.875rem;
     color: var(--bs-secondary-color, #6c757d);
     margin-bottom: 6px;
@@ -106,6 +215,6 @@
 .ur-status-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: $space-xs;
   flex-wrap: wrap;
 }

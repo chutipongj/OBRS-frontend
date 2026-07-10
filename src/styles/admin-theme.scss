@@ -13,6 +13,16 @@
   --admin-warning-text: #673a00;
   --admin-danger-bg: #ffdad6;
   --admin-danger-text: #93000a;
+  /* danger role border (design-system §2 danger): used by invalid form fields.
+     Runtime CSS var so it themes with the shell and isn't a raw hex per §13. */
+  --admin-danger-border: rgba(186, 26, 26, 0.8);
+  --admin-accepted-bg: #b7f3c0;
+  --admin-accepted-text: #0a3d1d;
+  /* in_review: neutral slate — distinct from new(orange)/accepted(green)/
+     resolved(blue,--admin-success-*)/rejected(red). Light bg + dark text works
+     in both themes, so no dark-mode override (see the --admin-accepted-text note). */
+  --admin-inreview-bg: #e2e5ea;
+  --admin-inreview-text: #3a4250;
 
   /* Accent tokens — defaults mirror the original teal palette so the admin
      look is unchanged when no variant class is applied. */
@@ -61,6 +71,11 @@
   --admin-outline: #3a444b;
   --admin-text: #e7edf1;
   --admin-muted: #9fb0bb;
+  /* NOTE: intentionally NO --admin-accepted-text override here. Like every
+     other status pill (success/warning/danger), .is-accepted keeps its light
+     pastel bg (#b7f3c0) + dark text (#0a3d1d) in both themes — a self-contained
+     chip. A dark-mode text override to a light green produced light-on-light
+     (~1.3:1, unreadable); the dark text reads at ~9.8:1 on the same bg. */
 
   background: radial-gradient(circle at 90% 5%, rgba(255, 122, 69, 0.08), transparent 48%),
     var(--admin-surface);
@@ -82,6 +97,40 @@
 
 .admin-shell.theme-staff.is-dark {
   --accent-text: #5eead4;
+}
+
+/* Bootstrap form controls inside the dark shell (OBRS-128): the staff POS panels
+   (/staff/sell) use raw .form-control/.form-select, which default to a white bg +
+   dark text and don't follow the theme — leaving white input boxes on the dark
+   shell. Point them at the shell surface/text tokens so they match .admin-field in
+   dark mode. Light mode keeps Bootstrap's defaults (this block is dark-only). */
+.admin-shell.is-dark {
+  // `!important` is required: the global `.form-control` rule in styles.scss forces
+  // `background-color: white !important` + a white border, and dark-theme.scss
+  // deliberately excludes `.admin-shell .form-control` from the public dark palette
+  // (expecting the admin side to theme it) — so this is the rule that finally does.
+  .form-control,
+  .form-select {
+    background-color: var(--admin-surface-soft) !important;
+    color: var(--admin-text);
+    border-color: var(--admin-outline) !important;
+  }
+
+  .form-control::placeholder {
+    color: var(--admin-muted);
+  }
+
+  /* Bootstrap .text-muted (#6c757d) is too dim on the dark surfaces (e.g. the
+     staff POS empty-state + hints). Lift to the themed muted token. */
+  .text-muted {
+    color: var(--admin-muted) !important;
+  }
+
+  /* Bootstrap's default select chevron is a dark SVG data-URI — invisible on the
+     dark control; swap for a light-stroked one. */
+  .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23e7edf1' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  }
 }
 
 .admin-shell,
@@ -167,6 +216,7 @@
 }
 
 .admin-nav-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -204,6 +254,31 @@
 
 .is-dark .admin-nav-link.active {
   border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ── NAV BADGE — "Usability Reports" new-report count ──
+   Default (mobile drawer + expanded 280px column): a small pill sitting in
+   normal flex flow after the label, pushed to the row's trailing edge via
+   margin-left: auto. The min-width(1101px) block below re-anchors it as an
+   absolutely-positioned corner badge when the sidebar is collapsed to the
+   76px icon rail (labels hidden). Uses the existing danger token (this is
+   an attention-needed indicator, not a decorative accent) + the accent
+   contrast token for the numeral — no new hex introduced. */
+.admin-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--admin-danger-text);
+  color: var(--accent-contrast);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .admin-sidebar-footer {
@@ -855,6 +930,16 @@
   color: var(--admin-danger-text);
 }
 
+.admin-status.is-accepted {
+  background: var(--admin-accepted-bg);
+  color: var(--admin-accepted-text);
+}
+
+.admin-status.is-info {
+  background: var(--admin-inreview-bg);
+  color: var(--admin-inreview-text);
+}
+
 .admin-status--icon {
   gap: 4px;
 
@@ -1058,13 +1143,17 @@
 }
 
 .admin-required {
-  color: #93000a;
+  color: var(--admin-danger-text);
 }
 
+/* design-system §5 — single input shape: pill (999px), matching app-admin-dropdown
+   and the date/time controls. Single-line inputs (text/date/number/email/…) render
+   as pills; the multi-line exception is textarea.admin-field below. 14px inline
+   padding keeps text off the pill's rounded ends (mirrors the dropdown trigger). */
 .admin-field {
   border: 1px solid rgba(189, 200, 207, 0.9);
-  border-radius: 10px;
-  padding: 9px 10px;
+  border-radius: 999px;
+  padding: 9px 14px;
   outline: 0;
   background: var(--admin-surface-card);
 }
@@ -1074,9 +1163,12 @@
   color: var(--admin-text);
 }
 
+/* Multi-line exception to the pill shape (§5): a literal 999px pill reads wrong on
+   a tall textarea, so multi-line controls use a moderate rounded radius instead. */
 textarea.admin-field {
   min-height: 86px;
   resize: vertical;
+  border-radius: 12px;
 }
 
 .admin-field:focus {
@@ -1085,11 +1177,11 @@ textarea.admin-field {
 }
 
 .admin-field.is-invalid {
-  border-color: rgba(186, 26, 26, 0.8);
+  border-color: var(--admin-danger-border);
 }
 
 .admin-error {
-  color: #93000a;
+  color: var(--admin-danger-text);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1271,12 +1363,23 @@ textarea.admin-field {
     padding: 11px 0;
   }
 
-  .admin-nav-link > span:not(.material-symbols-outlined),
+  .admin-nav-link > span:not(.material-symbols-outlined):not(.admin-nav-badge),
   .admin-nav-btn > span:not(.material-symbols-outlined) {
     opacity: 0;
     width: 0;
     overflow: hidden;
     transition: opacity 80ms ease, width 0ms ease 80ms;
+  }
+
+  /* Collapsed rail: re-anchor the badge as a small corner badge on the icon
+     instead of letting it collapse away with the (now hidden) label. Stays
+     within the nav-link's own box (top/right are small positive offsets) so
+     it is not clipped by the sidebar panel's overflow: hidden. */
+  .admin-shell:not(.is-sidebar-pinned) .admin-nav-link > .admin-nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    margin-left: 0;
   }
 
   /* Expanded: left-aligned with padding, labels visible */

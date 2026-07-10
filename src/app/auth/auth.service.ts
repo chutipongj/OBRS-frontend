@@ -24,17 +24,33 @@ export class AuthService {
   private readonly REGISTER_VALUE_KEY = 'register_value';
   private readonly RETURN_URL_KEY = 'auth_return_url';
 
-  // Backend role hierarchy, highest → lowest (WebSecurityConfig#roleHierarchy:
-  // admin > owner > salesperson > driver > customer). A higher role implicitly
-  // satisfies every lower requirement, so the frontend mirrors it below in
-  // hasAnyRole — never gating more tightly than the backend @PreAuthorize.
-  private static readonly ROLE_HIERARCHY = [
-    'admin',
-    'owner',
-    'salesperson',
-    'driver',
-    'customer',
-  ];
+  // Area-based access model (frontend routing only — the backend keeps its own
+  // WebSecurityConfig#roleHierarchy, where admin > owner > salesperson >
+  // driver > user). Each role is granted the set of roles it may satisfy:
+  //   - owner       → all-access superset (admin + staff + customer)
+  //   - admin       → cross-portal superset mirroring the backend hierarchy
+  //                   (admin + owner + staff + customer) — near-owner reach
+  //   - salesperson → the staff portal; still outranks driver within it
+  //   - driver      → the staff portal (driver pages)
+  //   - customer    → the public/customer area only
+  // NOTE (OBRS-176): the FE previously narrowed admin to the admin portal
+  // only, a deliberate UX confinement introduced with no backing card. That
+  // confinement is now reversed — admin is a cross-portal superset, matching
+  // the fact that the backend already authorizes admin on every endpoint
+  // (staff, customer, even owner-only). See docs/adr/0011-admin-cross-area-access.md.
+  private static readonly ROLE_GRANTS: Record<string, readonly string[]> = {
+    owner: ['owner', 'admin', 'salesperson', 'driver', 'customer'],
+    admin: ['admin', 'owner', 'salesperson', 'driver', 'customer'],
+    salesperson: ['salesperson', 'driver'],
+    driver: ['driver'],
+    customer: ['customer'],
+  };
+
+  // Roles that are confined to a non-public portal. A logged-in user holding
+  // only these (and not owner/customer) must be bounced out of customer
+  // pages. Admin is deliberately NOT in this list (OBRS-176): admin now has
+  // cross-area access and may reach the customer area, mirroring owner.
+  private static readonly PORTAL_ONLY_ROLES = ['salesperson', 'driver'];
 
   // Observable to track authentication status
   private authStatusSubject = new BehaviorSubject<boolean>(
@@ -130,7 +146,7 @@ export class AuthService {
     return url;
   }
 
-  navigateAfterLogin(defaultUrl: string = '/'): Promise<boolean> {
+  navigateAfterLogin(defaultUrl: string = this.getHomeRoute()): Promise<boolean> {
     const targetUrl = this.consumePostLoginRedirectUrl(defaultUrl);
     return this.router.navigateByUrl(targetUrl);
   }
@@ -168,25 +184,57 @@ export class AuthService {
       return true;
     }
 
-    // Expand each held role to also cover every role it outranks, so a higher
-    // role (e.g. owner) satisfies a lower requirement (salesperson/driver) the
-    // way the backend hierarchy does — admin still satisfies everything, owner
-    // reaches the Staff portal, and a driver still cannot reach salesperson-only
-    // pages. An unrecognised role only matches itself.
+    // Expand each held role into the set of roles it is granted (see
+    // ROLE_GRANTS): owner and admin both satisfy everything (cross-portal
+    // superset), salesperson still covers driver within the staff portal. An
+    // unrecognised role only matches itself.
     const effectiveRoles = new Set<string>();
     for (const role of this.getRoles()) {
-      const rank = AuthService.ROLE_HIERARCHY.indexOf(role);
-      if (rank === -1) {
-        effectiveRoles.add(role);
+      const grants = AuthService.ROLE_GRANTS[role];
+      if (grants) {
+        grants.forEach((granted) => effectiveRoles.add(granted));
       } else {
-        for (let i = rank; i < AuthService.ROLE_HIERARCHY.length; i++) {
-          effectiveRoles.add(AuthService.ROLE_HIERARCHY[i]);
-        }
+        effectiveRoles.add(role);
       }
     }
 
     return requiredRoles.some((role) =>
       effectiveRoles.has(String(role ?? '').trim().toLowerCase())
+    );
+  }
+
+  // The route a user should land on / be sent back to for their portal. Owner
+  // is all-access so it defaults to the public home; admin → /admin; staff
+  // roles → /staff; customer / unknown / guest → public home.
+  getHomeRoute(): string {
+    const roles = this.getRoles();
+    if (roles.includes('owner')) {
+      return '/';
+    }
+    if (roles.includes('admin')) {
+      return '/admin';
+    }
+    if (roles.includes('salesperson') || roles.includes('driver')) {
+      return '/staff';
+    }
+    return '/';
+  }
+
+  // Whether the current identity may sit on public/customer pages. Guests and
+  // customers/owners/admins belong there; a user with no recognised portal
+  // role fails open to the public site. Only users confined to a staff
+  // portal (salesperson/driver and not also owner/customer/admin) are
+  // excluded — the guard bounces them home.
+  canAccessCustomerArea(): boolean {
+    const roles = this.getRoles();
+    if (roles.length === 0) {
+      return true;
+    }
+    if (roles.includes('owner') || roles.includes('customer')) {
+      return true;
+    }
+    return !roles.some((role) =>
+      AuthService.PORTAL_ONLY_ROLES.includes(role)
     );
   }
 
