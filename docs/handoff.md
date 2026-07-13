@@ -14,6 +14,25 @@ Full contract reference: `../OBRS-backend/docs/api/`
 
 ## Pending Changes (Backend → Frontend)
 
+## [Backend] 2026-07-13 — `seatRequirement` added to `PassengerReqDto` on `POST /api/private/bookings` (OBRS-134)
+**Risk level**: R1 (additive request field — backward compatible; response shape unchanged). Backed by a **schema change** (Flyway `V7` adds `seat_maps.is_wheelchair_accessible` + `is_extra_legroom`).
+**Triggered by**: OBRS-134 — special-seat requirements. Lets a traveller who does not hand-pick a seat request a wheelchair-accessible or extra-legroom seat during auto-allocation.
+
+### What changed in the contract
+| Endpoint | Change type | Detail |
+|---|---|---|
+| `POST /api/private/bookings` | Optional request field added | `PassengerReqDto.seatRequirement` (string, ≤20 chars, optional). Accepted values `"wheelchair"` / `"extra_legroom"` (case-insensitive). Only used when `seatNumber` is omitted; **takes precedence over `seatPreference`**; any other/blank value = none. Best-effort — never rejects a booking. |
+
+### Request shape before / after
+- **Before**: `{ ..., seatPreference?: "window" | "aisle" }`
+- **After**: `{ ..., seatPreference?: "window" | "aisle", seatRequirement?: "wheelchair" | "extra_legroom" }`
+
+### Action required in frontend
+- [ ] (Optional, when surfacing accessibility UI) send `seatRequirement` for passengers who need a wheelchair-accessible / extra-legroom seat. No change required if not offered — the field is optional/additive.
+
+### Still unfinished on backend
+- Contract is complete once OBRS-134 deploys to SIT (Flyway `V7` auto-applies the columns). **Product decisions flagged**: (1) requirement is **best-effort** — an unmet wheelchair request falls back to a normal seat rather than hard-failing; revisit if a "no accessible seat available" rejection is wanted. (2) which physical seats are flagged accessible/legroom is seeded conservatively (front row = legroom; front seat = wheelchair) and should be curated per real vehicle layout.
+
 ## [Backend] 2026-07-13 — `seatPreference` added to `PassengerReqDto` on `POST /api/private/bookings` (OBRS-133)
 **Risk level**: R1 (additive request field — backward compatible; response shape unchanged)
 **Triggered by**: OBRS-133 — seat preference handling. Lets a traveller who does **not** hand-pick a seat express a window/aisle preference honoured during auto-allocation.
