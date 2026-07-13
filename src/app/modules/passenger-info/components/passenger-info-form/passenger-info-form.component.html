@@ -289,6 +289,27 @@
               {{ "PASSENGER_INFO.FORM.SEAT_SECTION_HINT" | translate }}
             </div>
 
+            <!-- OBRS-132: explicit auto-allocate affordance (reuses the isSelectSeat control) -->
+            <div class="col-12 mt-2">
+              <div class="form-check form-check-inline">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="autoAllocateSeat-{{ i }}"
+                  [checked]="!getFormValue(i, 'isSelectSeat')"
+                  (change)="
+                    onAutoAllocateChange(i, $any($event.target).checked)
+                  "
+                />
+                <label class="form-check-label" for="autoAllocateSeat-{{ i }}">
+                  {{ "PASSENGER_INFO.FORM.AUTO_ALLOCATE_SEAT" | translate }}
+                </label>
+              </div>
+            </div>
+
+            <ng-container
+              *ngIf="getFormValue(i, 'isSelectSeat'); else autoAllocatedNote"
+            >
             <!-- Outbound leg label (only labelled when there's a return leg too) -->
             <div class="col-12 mt-2" *ngIf="isReturnTrip$ | async">
               <div class="seat-leg-label">
@@ -352,6 +373,14 @@
                 </div>
               </div>
             </ng-container>
+            </ng-container>
+
+            <!-- OBRS-132: shown when auto-allocate is on for this passenger -->
+            <ng-template #autoAllocatedNote>
+              <div class="col-12 text-muted mt-2">
+                {{ "PASSENGER_INFO.FORM.AUTO_ALLOCATE_SEAT_HINT" | translate }}
+              </div>
+            </ng-template>
           </div>
         </div>
       </div>
