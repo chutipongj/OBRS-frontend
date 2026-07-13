@@ -14,6 +14,26 @@ Full contract reference: `../OBRS-backend/docs/api/`
 
 ## Pending Changes (Backend → Frontend)
 
+## [Backend] 2026-07-13 — `seatPreference` added to `PassengerReqDto` on `POST /api/private/bookings` (OBRS-133)
+**Risk level**: R1 (additive request field — backward compatible; response shape unchanged)
+**Triggered by**: OBRS-133 — seat preference handling. Lets a traveller who does **not** hand-pick a seat express a window/aisle preference honoured during auto-allocation.
+
+### What changed in the contract
+| Endpoint | Change type | Detail |
+|---|---|---|
+| `POST /api/private/bookings` | Optional request field added | `PassengerReqDto.seatPreference` (string, ≤20 chars, optional). Accepted values `"window"` / `"aisle"` (case-insensitive). Only used when `seatNumber` is omitted; any other/blank value = no preference. Best-effort — never rejects a booking. |
+
+### Request shape before / after
+- **Before**: each passenger = `{ passengerType, seatNumber?, title, firstName, lastName, ... }`
+- **After**: `{ ..., seatPreference?: "window" | "aisle" }` (omit or leave blank = today's behaviour)
+
+### Action required in frontend
+- [ ] (Optional, when surfacing preference UI) send `seatPreference` on passengers who choose window/aisle instead of a specific seat. Pair naturally with the OBRS-132 "auto-allocate" toggle (a passenger who auto-allocates can additionally state window/aisle).
+- [ ] No change required if the FE does not offer a preference control — the field is optional and additive.
+
+### Still unfinished on backend
+- None for the contract. Behaviour is backend-only and live once OBRS-133 deploys to SIT. **Product decisions flagged for review**: (1) interpretation = window/aisle (vs front/back or other); (2) precedence — preference is resolved per-passenger **before** group-together and takes precedence over it, so a passenger asking for a window may be seated apart from their party. Revisit if product wants "keep the party together" to win over an individual window/aisle ask.
+
 ## [Backend] 2026-07-08 — `rescheduleCount` added to `GET /api/private/bookings/me` (`BookingRespDto`)
 **Risk level**: R1 (additive)
 **Triggered by**: OBRS-83 — surfacing the reschedule flow in the customer My Bookings page needed up-front, no-fetch eligibility gating (don't wait for a `RESCHEDULE_ERROR_MAX_COUNT` response to know a booking can't be rescheduled again).
