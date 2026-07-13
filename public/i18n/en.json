@@ -294,6 +294,11 @@
   "COMMON": {
     "THEME_TOGGLE": "Toggle dark mode",
     "CLEAR": "Clear",
+    "CALENDAR_ICON_ALT": "Calendar Icon",
+    "CLOSE": "Close",
+    "ERROR": {
+      "SERVICE_UNAVAILABLE": "The service is temporarily unavailable. Please try again later."
+    },
     "EXPORT": {
       "BUTTON_LABEL": "Export",
       "FORMAT_CSV": "CSV",
@@ -320,7 +325,17 @@
       "BOOKINGS_MANAGEMENT": "Bookings",
       "PROMOTIONS": "Promotions",
       "USABILITY_REPORTS": "Usability Reports",
-      "REPORTS": "Reports"
+      "REPORTS": "Reports",
+      "SETTLEMENTS": "Settlements",
+      "EOD_SALES_REPORT": "End-of-day Sales",
+      "REMINDER_CONFIG": "Reminder Timing",
+      "REFUND_VOID_REPORT": "Refund / Void Summary",
+      "CASH_ONLINE_RECONCILIATION": "Cash / Online Reconciliation"
+    },
+    "NAV": {
+      "SEARCH_PLACEHOLDER": "Search menu...",
+      "SEARCH_CLEAR_ARIA": "Clear menu search",
+      "NO_RESULTS": "No menu found"
     },
     "LAYOUT": {
       "BRAND": "OBRS ADMIN",
@@ -367,7 +382,12 @@
       "DELETE": "Delete",
       "DELETING": "Deleting...",
       "DELETE_CONFIRM_TITLE": "Confirm Delete",
-      "DELETE_CONFIRM_MESSAGE": "This action cannot be undone. Do you want to continue?"
+      "DELETE_CONFIRM_MESSAGE": "This action cannot be undone. Do you want to continue?",
+      "CANCEL_TRIP_CONFIRM_TITLE": "Confirm Cancel Trip",
+      "CANCEL_TRIP_REFUND_MESSAGE": "{{count}} booking(s) will be automatically refunded and notified.",
+      "CANCEL_TRIP_NO_REFUND_MESSAGE": "The trip will be cancelled. No refund will be issued.",
+      "CANCEL_TRIP_BTN": "Cancel Trip",
+      "CANCELLING": "Cancelling..."
     },
     "VALIDATION": {
       "REQUIRED": "This field is required.",
@@ -382,7 +402,9 @@
       "EMAIL_EXIST": "This email is already in use.",
       "PHONE_NO_EXIST": "This phone number is already in use.",
       "SAME_PASSWORD_VALIDATE": "Please enter the same password.",
-      "FORM_INVALID": "Please complete the highlighted required fields."
+      "FORM_INVALID": "Please complete the highlighted required fields.",
+      "WHOLE_NUMBER": "Please enter a whole number (no decimals).",
+      "POSITIVE_NUMBER": "Please enter a number greater than 0."
     },
     "MESSAGES": {
       "CREATED": "Created successfully.",
@@ -397,10 +419,17 @@
       "LOAD_ROUTES_FAILED": "Unable to load routes.",
       "LOAD_SCHEDULES_FAILED": "Unable to load schedules.",
       "LOAD_PROMOTIONS_FAILED": "Unable to load promotions.",
+      "LOAD_MAINTENANCE_FAILED": "Unable to load maintenance records.",
       "DELETE_CONFIRM_BODY": "This action cannot be undone. Do you want to continue?",
       "DELETE_BTN": "Delete",
       "UNLOCK_SUCCESS": "Account unlocked successfully.",
-      "UNLOCK_FAILED": "Unable to unlock the account."
+      "UNLOCK_FAILED": "Unable to unlock the account.",
+      "CANCEL_TRIP_CONFIRM_TITLE": "Confirm Cancel Trip",
+      "CANCEL_TRIP_REFUND_BODY": "{{count}} booking(s) will be automatically refunded and notified.",
+      "CANCEL_TRIP_NO_REFUND_BODY": "The trip will be cancelled. No refund will be issued.",
+      "CANCEL_TRIP_BTN": "Cancel Trip",
+      "SCHEDULE_CANCELLED": "Trip cancelled successfully. {{count}} booking(s) affected.",
+      "CANCEL_FAILED": "Unable to cancel the trip."
     },
     "LOOKUP": {
       "TITLE": "Lookup Settings",
@@ -552,7 +581,29 @@
       "FILTER_STATUS": "Status: All",
       "ADD_TITLE": "Create Vehicle",
       "EDIT_TITLE": "Edit Vehicle",
-      "MODAL_HINT": "Set vehicle information and current operating status."
+      "MODAL_HINT": "Set vehicle information and current operating status.",
+      "MAINTENANCE": {
+        "TAB": "Maintenance",
+        "MANAGE_ACTION": "Manage maintenance",
+        "TAB_DISABLED_HINT": "Select a vehicle first",
+        "FOCUSED_BANNER": "Showing maintenance for {{vehicle}}",
+        "FOCUSED_CLEAR": "Back to vehicle list",
+        "TABLE_TITLE": "Maintenance Records",
+        "ADD": "Add Maintenance Record",
+        "ADD_TITLE": "Create Maintenance Record",
+        "EDIT_TITLE": "Edit Maintenance Record",
+        "MODAL_HINT": "Set the reason, dates, and status for this maintenance record.",
+        "REASON": "Reason",
+        "START_DATE": "Start Date",
+        "END_DATE": "End Date",
+        "NEXT_DUE_DATE": "Next Due Date",
+        "STATUS": "Status",
+        "NOTES": "Notes",
+        "NOTES_PLACEHOLDER": "Add any additional notes (optional)",
+        "DATE_RANGE_VALIDATION": "End date must be on or after the start date.",
+        "EMPTY_TITLE": "No maintenance records yet",
+        "EMPTY_BODY": "This vehicle has no maintenance history. Add one to get started."
+      }
     },
     "ROUTES": {
       "TITLE": "Route Management",
@@ -644,7 +695,8 @@
       "TRIP_UNITS": "schedules",
       "VIEW_SCHEDULES": "View generated schedules",
       "FOCUSED_BANNER": "Showing schedules generated from {{set}}.",
-      "FOCUSED_CLEAR": "Show all schedules"
+      "FOCUSED_CLEAR": "Show all schedules",
+      "VEHICLE_UNDER_MAINTENANCE": "This vehicle has an open maintenance record covering the selected date. Choose a different vehicle or date."
     },
     "BOOKINGS": {
       "TITLE": "Bookings Management",
@@ -771,6 +823,179 @@
         "RANGE_INVALID": "The From date must be on or before the To date.",
         "RANGE_TOO_LARGE": "The selected range is too large. Please select a range of 366 days or fewer."
       }
+    },
+    "SETTLEMENTS": {
+      "SUBTITLE": "Confirm cash and revenue handover for each departed round.",
+      "FILTER_FROM": "From",
+      "FILTER_TO": "To",
+      "TABLE_TITLE": "Rounds Pending Settlement",
+      "COL": {
+        "ROUTE": "Route",
+        "DEPARTURE": "Departure",
+        "STATUS": "Status",
+        "AMOUNT": "Total Amount",
+        "CHANNEL": "Channel",
+        "METHOD": "Payment Method",
+        "TICKETS": "Tickets"
+      },
+      "STATUS": {
+        "PENDING": "Pending",
+        "SETTLED": "Settled"
+      },
+      "EMPTY": "No rounds due for settlement in the selected range.",
+      "LOAD_FAILED": "Unable to load settlements. Please try again.",
+      "ERROR": {
+        "RANGE_INVALID": "The From date must be on or before the To date.",
+        "RANGE_TOO_LARGE": "The selected range is too large. Please select a range of 366 days or fewer.",
+        "ALREADY_SETTLED": "This round has already been settled by another admin.",
+        "AMOUNT_MISMATCH": "The revenue total changed since this round was opened. Review the updated amount and try again.",
+        "SCOPE_FORBIDDEN": "You do not have permission to settle this round.",
+        "ROUND_NOT_DEPARTED": "This round has not departed yet and cannot be settled.",
+        "SCHEDULE_NOT_FOUND": "This round could not be found. It may have been removed.",
+        "CONFIRM_FAILED": "Unable to confirm settlement. Please try again."
+      },
+      "DETAIL": {
+        "TITLE": "Round Settlement",
+        "ROUTE": "Route",
+        "DEPARTURE": "Departure",
+        "ON_SITE_TOTAL": "On-site Total",
+        "AGENCY_TOTAL": "Agency Total",
+        "TOTAL_AMOUNT": "Total Amount",
+        "TICKET_COUNT": "Tickets",
+        "PASSENGER_COUNT": "Passengers",
+        "BY_CHANNEL": "By Channel",
+        "BY_METHOD": "By Payment Method",
+        "METHOD_NOTE": "Method totals are indicative; channel totals reconcile.",
+        "SETTLED_BY": "Settled By",
+        "SETTLED_AT": "Settled At",
+        "DISCREPANCY_TITLE": "Discrepancy",
+        "DISCREPANCY_NONE": "No discrepancy — the acknowledged amount matched the recorded total.",
+        "DISCREPANCY_FOUND": "A discrepancy was recorded for this settlement.",
+        "DIFFERENCE_AMOUNT": "Difference",
+        "LOAD_FAILED": "Unable to load round details.",
+        "RETRY": "Retry"
+      },
+      "CONFIRM": {
+        "TITLE": "Confirm Cash Handover",
+        "TEXT": "Confirm you have received {{amount}} in total for this round?",
+        "CONFIRM_BTN": "Confirm Receipt",
+        "SUCCESS": "Settlement confirmed."
+      },
+      "METHOD": {
+        "CASH": "Cash",
+        "CARD": "Card",
+        "BANK_TRANSFER": "Bank Transfer",
+        "QR_PROMPTPAY": "QR PromptPay",
+        "TRUEMONEY": "TrueMoney",
+        "SHOPEEPAY": "ShopeePay",
+        "RABBIT_LINEPAY": "Rabbit LINE Pay",
+        "OTHER": "Other"
+      },
+      "CHANNEL": {
+        "ONLINE": "Online",
+        "WALK_IN": "Walk-in",
+        "AGENT": "Agent",
+        "KIOSK": "Kiosk"
+      }
+    },
+    "EOD_REPORT": {
+      "SUBTITLE": "End-of-day sales by salesperson, for staff-sold bookings on a single day.",
+      "FILTER_DATE": "Date",
+      "TABLE_TITLE": "Sales by Salesperson",
+      "COL": {
+        "SALESPERSON": "Salesperson",
+        "BOOKINGS": "Bookings",
+        "TICKETS": "Tickets",
+        "CASH": "Cash",
+        "NON_CASH": "Non-cash",
+        "NET": "Net"
+      },
+      "GRAND_TOTAL": "Grand Total",
+      "EXPAND_ARIA": "Show payment method breakdown",
+      "COLLAPSE_ARIA": "Hide payment method breakdown",
+      "EMPTY_DAY": "No staff-sold activity on the selected day.",
+      "LOAD_FAILED": "Unable to load the report. Please try again.",
+      "METHOD": {
+        "CASH": "Cash",
+        "CARD": "Card",
+        "QR_PROMPTPAY": "PromptPay QR",
+        "BANK_TRANSFER": "Bank Transfer",
+        "TRUEMONEY": "TrueMoney",
+        "SHOPEEPAY": "ShopeePay",
+        "RABBIT_LINEPAY": "Rabbit LINE Pay",
+        "OTHER": "Other"
+      }
+    },
+    "REMINDER_CONFIG": {
+      "SUBTITLE": "Set how far in advance departure and boarding reminders are sent.",
+      "HOURS_LABEL": "Departure Reminder (hours before)",
+      "HOURS_HELPER": "How many hours before departure the reminder notification is sent.",
+      "MINUTES_LABEL": "Boarding Reminder (minutes before)",
+      "MINUTES_HELPER": "How many minutes before departure the boarding reminder is sent.",
+      "LOAD_FAILED": "Unable to load the reminder-timing config."
+    },
+    "REFUND_VOID_REPORT": {
+      "SUBTITLE": "Refunded, pending-manual-refund, and voided ticket totals for a date range.",
+      "FILTER_FROM": "From",
+      "FILTER_TO": "To",
+      "BASIS_NOTE": "Refunded and Voided are bucketed by the date the refund or void was processed, not the original booking or departure date.",
+      "PARTITION_NOTE": "Voided splits into Cancelled (staff-cancelled) and Expired (unpaid holds that timed out) — the two always sum to the Voided total.",
+      "CARD": {
+        "REFUNDED": "Refunded (gross)",
+        "REFUNDED_HINT": "Gross amount refunded to customers, before any processing fees are deducted.",
+        "MANUAL_PENDING": "Refund pending (manual)",
+        "VOIDED": "Voided",
+        "CANCELLED": "Cancelled",
+        "EXPIRED": "Expired",
+        "COUNT_LABEL": "Count"
+      },
+      "TABLE_TITLE": "Daily Breakdown",
+      "COL": {
+        "DATE": "Date",
+        "REFUNDED_COUNT": "Refunded (count)",
+        "REFUNDED_AMOUNT": "Refunded (amount)",
+        "MANUAL_COUNT": "Manual (count)",
+        "MANUAL_AMOUNT": "Manual (amount)",
+        "VOIDED_COUNT": "Voided (count)",
+        "VOIDED_AMOUNT": "Voided (amount)"
+      },
+      "EXPAND_ARIA": "Show cancelled/expired breakdown",
+      "COLLAPSE_ARIA": "Hide cancelled/expired breakdown",
+      "EMPTY": "No refunds or voided tickets in the selected range.",
+      "LOAD_FAILED": "Unable to load the report. Please try again.",
+      "ERROR": {
+        "RANGE_INVALID": "The From date must be on or before the To date.",
+        "RANGE_TOO_LARGE": "The selected range is too large. Please select a range of 366 days or fewer."
+      }
+    },
+    "CASH_ONLINE_RECONCILIATION": {
+      "SUBTITLE": "Cash, online, and other payment totals collected for a date range.",
+      "FILTER_FROM": "From",
+      "FILTER_TO": "To",
+      "BASIS_NOTE": "Cash, Online, and Other are bucketed by the date the booking was created, not the travel date.",
+      "PARTITION_NOTE": "Payments split into Cash (staff-collected), Online (card, PromptPay, and other digital gateways), and Other (bank transfer and miscellaneous) — every collected payment falls into exactly one bucket.",
+      "CARD": {
+        "CASH": "Cash",
+        "ONLINE": "Online",
+        "OTHER": "Other",
+        "COLLECTED": "Collected",
+        "REFUNDED": "Refunded",
+        "NET": "Net",
+        "COUNT_LABEL": "Count",
+        "TOTAL_COLLECTED": "Total Collected"
+      },
+      "TABLE_TITLE": "Daily Breakdown",
+      "COL": {
+        "DATE": "Date"
+      },
+      "EXPAND_ARIA": "Show payment counts",
+      "COLLAPSE_ARIA": "Hide payment counts",
+      "EMPTY": "No payments collected in the selected range.",
+      "LOAD_FAILED": "Unable to load the report. Please try again.",
+      "ERROR": {
+        "RANGE_INVALID": "The From date must be on or before the To date.",
+        "RANGE_TOO_LARGE": "The selected range is too large. Please select a range of 366 days or fewer."
+      }
     }
   },
   "AUTH": {
@@ -805,6 +1030,7 @@
     "GOOGLE_SIGNIN_PDPA": "I agree to the collection and use of my personal data (PDPA) for Google sign-in",
     "GOOGLE_SIGNIN_PDPA_REQUIRED": "Please accept the consent to sign in with Google",
     "GOOGLE_SIGNIN_LOADING": "Signing in with Google...",
+    "EMAIL_CHANGED_BANNER": "Your login email has been changed. Please sign in with your new email.",
     "ERROR": {
       "GOOGLE_TOKEN_INVALID": "Invalid Google sign-in token. Please try again.",
       "ACCOUNT_DISABLED": "Your account has been disabled. Please contact support.",
@@ -892,6 +1118,81 @@
       "GENERIC": "Something went wrong. Please try again."
     }
   },
+  "ACCOUNT": {
+    "TITLE": "Account",
+    "SUBTITLE": "Manage your login details.",
+    "EMAIL_SECTION_TITLE": "Login email",
+    "CHANGE_EMAIL_BUTTON": "Change email",
+    "NOTIFICATIONS_SECTION_TITLE": "Notification preferences",
+    "NOTIFICATIONS_SECTION_DESC": "Choose how we contact you for bookings, schedule changes, and reminders.",
+    "MANAGE_NOTIFICATIONS_BUTTON": "Manage notifications"
+  },
+  "NOTIFICATION_PREFS": {
+    "TITLE": "Notification preferences",
+    "SUBTITLE": "Choose which channels we use to reach you for each type of update.",
+    "CHANNEL_EMAIL": "Email",
+    "CHANNEL_SMS": "SMS",
+    "CHANNEL_NA": "Not available",
+    "CRITICAL_HINT": "At least one channel must stay on for this notification.",
+    "SAVE_BUTTON": "Save changes",
+    "SAVE_SUCCESS": "Notification preferences saved.",
+    "RETRY": "Try again",
+    "UNSAVED_CHANGES_TITLE": "Discard unsaved changes?",
+    "UNSAVED_CHANGES_TEXT": "You have unsaved notification preference changes. If you leave now, they will be lost.",
+    "UNSAVED_CHANGES_CONFIRM": "Discard changes",
+    "UNSAVED_CHANGES_CANCEL": "Keep editing",
+    "ERROR": {
+      "LOAD_FAILED": "Couldn't load your notification preferences. Please try again.",
+      "CRITICAL_LAST_CHANNEL": "At least one channel must stay on for this notification.",
+      "GENERIC": "Something went wrong. Please try again."
+    },
+    "TYPE": {
+      "PAYMENT_CONFIRMED": "Payment confirmed",
+      "BOOKING_CANCELLED": "Booking cancelled",
+      "SCHEDULE_CANCELLED": "Trip cancelled",
+      "BOOKING_RESCHEDULED": "Booking rescheduled",
+      "SCHEDULE_TIME_CHANGED": "Trip time changed",
+      "PRE_DEPARTURE_REMINDER": "Pre-departure reminder",
+      "BOARDING_REMINDER": "Boarding reminder"
+    }
+  },
+  "EMAIL_CHANGE": {
+    "DIALOG_TITLE": "Change your email",
+    "CURRENT_PASSWORD_LABEL": "Current password",
+    "CURRENT_PASSWORD_PLACEHOLDER": "Please enter your current password",
+    "CURRENT_PASSWORD_REQUIRED": "Please enter your current password",
+    "NEW_EMAIL_LABEL": "New email",
+    "NEW_EMAIL_PLACEHOLDER": "Please enter your new email",
+    "NEW_EMAIL_REQUIRED": "Please enter a valid email",
+    "NEW_EMAIL_EXIST": "This email is already in use",
+    "SUBMIT": "Send verification link",
+    "SUBMIT_LOADING": "Sending...",
+    "CANCEL": "Cancel",
+    "CLOSE": "Close",
+    "SENT_TITLE": "Verification link sent",
+    "SENT_MESSAGE": "We sent a verification link to {{email}}.",
+    "SENT_NOTE": "Your login email will not change until you confirm via the link.",
+    "RESEND_BUTTON": "Resend link",
+    "RESEND_LOADING": "Sending...",
+    "RESEND_SUCCESS": "Verification link resent. Please check your inbox.",
+    "ERROR": {
+      "INVALID_PASSWORD": "Incorrect password. Please try again.",
+      "EMAIL_CONFLICT": "This email is already in use.",
+      "SAME_EMAIL": "This is already your current email.",
+      "RATE_LIMIT": "Too many resend attempts. Please wait before trying again.",
+      "GENERIC": "Something went wrong. Please try again."
+    }
+  },
+  "EMAIL_CHANGE_CONFIRM": {
+    "CONFIRMING": "Confirming your new email...",
+    "SUCCESS_TITLE": "Email changed!",
+    "SUCCESS_MESSAGE": "Your login email has been changed to {{email}}. Please sign in with your new email.",
+    "SUCCESS_SIGNIN": "Sign in",
+    "INVALID_TITLE": "Link already used or expired",
+    "INVALID_MESSAGE": "This confirmation link is no longer valid. If you already changed your email, just sign in.",
+    "TARGET_TAKEN_TITLE": "Email no longer available",
+    "TARGET_TAKEN_MESSAGE": "This email address was taken by another account in the meantime. Please restart from your account page."
+  },
   "LOGIN_BY_PHONE_NO": {
     "WELCOME": "Welcome to signin",
     "HINT": "Please enter the OTP number from the SMS sent to the number",
@@ -936,7 +1237,8 @@
       "MENU": "Menu",
       "PROFILE_MENU": "Open profile menu",
       "THEME_TOGGLE": "Toggle dark mode",
-      "MY_BOOKINGS": "My Bookings"
+      "MY_BOOKINGS": "My Bookings",
+      "ACCOUNT": "Account"
     },
     "HOME_BOOKING": {
       "ROUNDTRIP_1": "One-way",
@@ -1006,11 +1308,13 @@
       "SUMMARY_DROPOFF_VALUE": "{{province}} {{count}} stops",
       "SUMMARY_DISTANCE": "Approx. {{distance}} km",
       "SUMMARY_DURATION": "Travel time approx. {{min}} - {{max}} min",
+      "SUMMARY_DURATION_SEGMENT": "Travel time approx. {{duration}} min",
       "SUMMARY_SEGMENT_NOTE": "For your selected pickup and drop-off",
       "DETAIL_PICKUP_TITLE": "Pickup detail ({{province}})",
       "DETAIL_DROPOFF_TITLE": "Drop-off detail ({{province}})",
       "DETAIL_TIME": "Approx. {{time}}",
       "BTN_OPEN_MAPS": "Open in Google Maps",
+      "BTN_NAVIGATE": "Navigate",
       "VALIDATION_SELECT_BOTH": "Please select both a pickup and a drop-off point before confirming",
       "VALIDATION_SELECT_PICKUP": "Please select a pickup point before confirming",
       "VALIDATION_SELECT_DROPOFF": "Please select a drop-off point before confirming",
@@ -1052,11 +1356,12 @@
     "BAHT_UNIT": "baht",
     "SEAT_REMAIN": "remaining",
     "SEAT_UNIT": "seats",
-    "SEAT_PER_PASSENGER": "price/person",
+    "SEAT_PER_PASSENGER": "/seat",
     "CHOOSE": "select",
     "CHANGE": "change data",
     "NO_RESULTS": "No schedules found for your search. Try a different date, route, or fewer passengers.",
-    "NO_RETURN_RESULTS": "No return schedules found for your search. Try a different return date or fewer passengers."
+    "NO_RETURN_RESULTS": "No return schedules found for your search. Try a different return date or fewer passengers.",
+    "ESTIMATE_KM_UNIT": "km"
   },
   "REVIEW_SCHEDULE_BOOKING": {
     "SUMMARY": {
@@ -1071,6 +1376,7 @@
       "TIME_UNIT": "",
       "HOUR_UNIT": "Hours",
       "MINITE_UNIT": "Minutes",
+      "ESTIMATE_KM_UNIT": "km",
       "BTN_BACK": "Back",
       "BTN_NEXT": "Next"
     },
@@ -1132,6 +1438,10 @@
       "PHONE_NUMBER_PLACEHOLDER": "Please enter your phone number",
       "PHONE_NUMBER_REQUIRED": "Please enter your phone number",
       "PHONE_NUMBER_INVALID": "Please enter a valid 10-digit phone number",
+      "EMAIL": "Email",
+      "EMAIL_PLACEHOLDER": "Please enter your email",
+      "EMAIL_REQUIRED": "Please enter your email",
+      "EMAIL_INVALID": "Please enter a valid email address",
       "GENDER_STATUS": "Gender/Status",
       "GENDER_STATUS_REQUIRED": "Please select a gender/status",
       "SEAT_SECTION_TITLE": "Seat selection",
@@ -1212,6 +1522,7 @@
   "E_TICKET": {
     "TITLE": "E-Ticket",
     "SUBTITLE": "NJ Phuyaipu online travel ticket",
+    "BTN_NAVIGATE": "Navigate",
     "LABEL": {
       "BOOKING_REF": "Booking ref",
       "TICKET_NO": "Ticket no.",
@@ -1229,7 +1540,10 @@
       "PASSENGER_PHONE": "Phone number of the booker",
       "PAYMENT_DATE": "Payment date/time",
       "TOTAL": "Total",
-      "TOTAL_UNIT": "baht"
+      "TOTAL_UNIT": "baht",
+      "ESTIMATE_KM_UNIT": "km",
+      "LEG_OUTBOUND": "Outbound",
+      "LEG_RETURN": "Return"
     },
     "QR_HINT": "QR code is used for identity verification before boarding only.",
     "QR_UNAVAILABLE": "This ticket cannot be used to board (cancelled, refunded, or no longer valid).",
@@ -1279,6 +1593,7 @@
   "STAFF": {
     "PAGES": {
       "SELL": "Walk-in Sales",
+      "SELL_RECEIPT": "Print Ticket",
       "SCHEDULES": "Schedule Management",
       "DRIVER": "My Schedules",
       "BOARDING": "Boarding List"
@@ -1310,9 +1625,7 @@
     "MESSAGES": {
       "LOAD_BOARDING_FAILED": "Unable to load boarding list.",
       "LOAD_MY_SCHEDULES_FAILED": "Unable to load your schedules.",
-      "LOAD_SCHEDULES_FAILED": "Unable to load schedules.",
-      "CHECK_IN_SUCCESS": "Checked in successfully.",
-      "CHECK_IN_FAILED": "Unable to check in passenger."
+      "LOAD_SCHEDULES_FAILED": "Unable to load schedules."
     },
     "VALIDATION": {
       "FORM_INVALID": "Please complete all required fields.",
@@ -1334,16 +1647,60 @@
       "FROM": "From",
       "TO": "To",
       "STATUS": "Status",
-      "CHECKED_IN": "Checked in",
-      "CHECK_IN_BTN": "Check In",
       "EMPTY_TITLE": "No passengers yet",
       "EMPTY_BODY": "No boarding records found for this schedule.",
+      "BOARDED": "Boarded",
+      "NOT_BOARDED": "Not boarded",
+      "BOARD_BTN": "Board",
+      "BOARDING_IN_PROGRESS": "Boarding…",
+      "BOARDED_AT": "Boarded at",
+      "BOARDED_BY": "Boarded by",
+      "UNBOARD_BTN": "Un-board",
+      "UNBOARD_IN_PROGRESS": "Un-boarding…",
+      "UNBOARD_CONFIRM_TITLE": "Un-board this passenger?",
+      "UNBOARD_CONFIRM_TEXT": "This reverses the recorded boarding for this ticket.",
+      "UNBOARD_CONFIRM_CONFIRM": "Un-board",
+      "UNBOARD_CONFIRM_CANCEL": "Cancel",
+      "BOARD_SUCCESS": "Passenger boarded successfully.",
+      "BOARD_FAILED": "Unable to board passenger.",
+      "UNBOARD_SUCCESS": "Passenger un-boarded successfully.",
+      "UNBOARD_FAILED": "Unable to un-board passenger.",
+      "PRINT_BTN": "Print",
+      "PRINT_HEADER": {
+        "TITLE": "Passenger Manifest",
+        "ROUTE": "Route",
+        "DEPARTURE": "Departure",
+        "VEHICLE": "Vehicle",
+        "DRIVER": "Driver",
+        "SEATS_SOLD": "Seats sold"
+      },
+      "ACTION_ERROR": {
+        "ALREADY_BOARDED": "This ticket has already been boarded.",
+        "NOT_BOARDED": "This ticket has not been boarded yet.",
+        "TICKET_NOT_CONFIRMED": "This ticket can't be boarded (cancelled, refunded, no-show, or rescheduled away).",
+        "BOARDING_WINDOW_NOT_OPEN": "Boarding hasn't opened for this trip yet.",
+        "TICKET_ERROR_ID_NOT_FOUND": "No ticket was found.",
+        "BOARDING_ROUND_ARRIVED": "This trip has already arrived — boarding is locked.",
+        "GENERIC": "Action failed. Please try again."
+      },
       "SCAN": {
         "LABEL": "Boarding token",
         "PLACEHOLDER": "Paste or scan the boarding token",
         "BUTTON": "Validate / Board",
         "VALIDATING": "Validating…",
-        "CAMERA_SOON": "Camera scanning is coming soon — enter the token manually for now.",
+        "MODE_TOGGLE_LABEL": "Boarding scan mode",
+        "MODE_TEXT": "Text",
+        "MODE_CAMERA": "Camera",
+        "CAMERA": {
+          "HINT": "Point the camera at the passenger's e-ticket QR code.",
+          "SCANNING": "Scanning…",
+          "REQUESTING": "Requesting camera access…",
+          "DENIED": "Camera access was denied. Allow camera permission in your browser settings, then try again.",
+          "NO_CAMERA": "No camera was found on this device.",
+          "UNSUPPORTED": "Camera scanning isn't supported on this device/browser.",
+          "ERROR": "Couldn't start the camera. Please try again.",
+          "RETRY": "Try again"
+        },
         "SUCCESS_TITLE": "Boarded",
         "RESULT_NAME": "Passenger",
         "RESULT_SEAT": "Seat",
@@ -1357,8 +1714,35 @@
           "TICKET_NOT_CONFIRMED": "This ticket can't be used to board (cancelled, refunded, no-show, or rescheduled away).",
           "ALREADY_BOARDED": "This ticket has already been boarded.",
           "TICKET_ERROR_ID_NOT_FOUND": "No ticket was found for this token.",
+          "BOARDING_ROUND_ARRIVED": "This trip has already arrived — boarding is locked.",
           "GENERIC": "Validation failed. Please try again."
         }
+      }
+    },
+    "SCHEDULE_STATUS": {
+      "PILL": {
+        "SCHEDULED": "Scheduled",
+        "DEPARTED": "Departed",
+        "ARRIVED": "Arrived",
+        "UNKNOWN": "Status unavailable"
+      },
+      "ACTION": {
+        "MARK_DEPARTED": "Mark departed",
+        "MARK_DEPARTED_SUCCESS": "Schedule marked as departed.",
+        "MARK_ARRIVED": "Mark arrived",
+        "MARK_ARRIVED_SUCCESS": "Schedule marked as arrived.",
+        "UPDATING": "Updating…"
+      },
+      "CONFIRM": {
+        "ARRIVED_CONFIRM_TITLE": "Mark this trip as arrived?",
+        "ARRIVED_CONFIRM_TEXT": "This locks boarding for this schedule — no passenger can be boarded or un-boarded afterwards.",
+        "ARRIVED_CONFIRM_CONFIRM": "Mark arrived",
+        "ARRIVED_CONFIRM_CANCEL": "Cancel"
+      },
+      "LOCK_BANNER": "This trip has arrived. Boarding is locked and can no longer be changed.",
+      "ERROR": {
+        "SCHEDULE_TRANSITION_ILLEGAL": "This schedule can't move to that status right now.",
+        "GENERIC": "Unable to update the schedule status. Please try again."
       }
     },
     "DRIVER": {
@@ -1435,7 +1819,6 @@
       "TAB_TICKET_SALES": "Ticket Sales",
       "TAB_TRIP_DETAILS": "Trip Details",
       "TAB_BOARDING": "Boarding",
-      "BOARDING_TAB_HINT": "View the boarding list and check in passengers for this route.",
       "PAYMENT_CASH": "Cash",
       "PAYMENT_PROMPTPAY": "PromptPay",
       "PAYMENT_CREDIT": "Credit Card",
@@ -1500,7 +1883,29 @@
       "SCHEDULE_DELETE_ITEM": "Delete schedule",
       "BACK_BTN": "Back",
       "CONFIRM_BTN": "Confirm",
-      "SOLD_SUCCESS": "Sold successfully — {{bookingNumber}}"
+      "SOLD_SUCCESS_TITLE": "Sale complete",
+      "SOLD_SUCCESS": "Sold successfully — {{bookingNumber}}",
+      "PRINT_TICKET": "Print ticket"
+    },
+    "SELL_RECEIPT": {
+      "SUBTITLE": "Printable proof of a walk-in sale",
+      "DOCUMENT_TITLE": "Sales Receipt",
+      "BACK_TO_SELL": "Back to Sell",
+      "LOADING": "Loading receipt...",
+      "LOAD_ERROR": "Unable to load this receipt.",
+      "RETRY": "Retry",
+      "PAYMENT_METHOD_OTHER": "Other",
+      "LABEL": {
+        "BOOKING_REF": "Booking ref",
+        "ROUTE": "Route",
+        "DEPARTURE": "Departure",
+        "ARRIVAL": "Arrival",
+        "PAYMENT_METHOD": "Payment method",
+        "PAID_AT": "Paid at",
+        "AMOUNT_PAID": "Amount paid",
+        "SOLD_BY": "Sold by",
+        "PASSENGERS": "Passengers"
+      }
     },
     "BOARDING_ENTRY": {
       "TITLE": "Select a Schedule",

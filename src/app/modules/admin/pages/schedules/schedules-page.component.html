@@ -65,16 +65,20 @@
   </label>
 
   <p-calendar
-    styleClass="schedule-calendar-filter"
-    inputStyleClass="schedule-calendar-filter-input"
-    panelStyleClass="schedule-calendar-filter-panel"
+    styleClass="app-date-field"
+    panelStyleClass="app-date-field-panel"
     dateFormat="dd/mm/yy"
     [ngModel]="selectedDateFilter"
     (ngModelChange)="onDateFilterChange($event)"
     [showIcon]="true"
+    [iconDisplay]="'input'"
     [showButtonBar]="true"
     [placeholder]="'ADMIN.SCHEDULES.FILTER_DATE' | translate"
-  ></p-calendar>
+  >
+    <ng-template pTemplate="inputicon">
+      <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+    </ng-template>
+  </p-calendar>
 
   <app-admin-dropdown
     [value]="selectedRouteFilter"
@@ -483,14 +487,18 @@
           </label>
           <p-calendar
             formControlName="departureDate"
-            styleClass="schedule-calendar-filter"
-            inputStyleClass="schedule-calendar-filter-input"
-            panelStyleClass="schedule-calendar-filter-panel"
+            styleClass="app-date-field"
+            panelStyleClass="app-date-field-panel"
             dateFormat="dd/mm/yy"
             [showIcon]="true"
+            [iconDisplay]="'input'"
             [showButtonBar]="true"
             [placeholder]="'ADMIN.SCHEDULES.DEPARTURE_DATE' | translate"
-          ></p-calendar>
+          >
+            <ng-template pTemplate="inputicon">
+              <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+            </ng-template>
+          </p-calendar>
           <small class="schedule-form-message admin-error">
             {{ isScheduleFieldInvalid('departureDate') ? ('ADMIN.VALIDATION.REQUIRED' | translate) : '' }}
           </small>
@@ -502,15 +510,19 @@
           </label>
           <p-calendar
             formControlName="departureTime"
-            styleClass="schedule-calendar-filter"
-            inputStyleClass="schedule-calendar-filter-input"
-            panelStyleClass="schedule-calendar-filter-panel"
+            styleClass="app-date-field"
+            panelStyleClass="app-date-field-panel"
             [timeOnly]="true"
             [hourFormat]="'24'"
             [showIcon]="true"
+            [iconDisplay]="'input'"
             [showButtonBar]="true"
             [placeholder]="'ADMIN.SCHEDULES.DEPARTURE_TIME' | translate"
-          ></p-calendar>
+          >
+            <ng-template pTemplate="inputicon">
+              <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+            </ng-template>
+          </p-calendar>
           <small class="schedule-form-message admin-error">
             {{
               isScheduleFieldInvalid('departureTime')
@@ -559,6 +571,9 @@
             labelKey="label"
             [placeholder]="'ADMIN.SCHEDULES.VEHICLE_OPTIONAL' | translate"
           ></app-admin-dropdown>
+          <small class="schedule-form-message admin-error" *ngIf="vehicleUnderMaintenanceMessage">
+            {{ vehicleUnderMaintenanceMessage }}
+          </small>
         </div>
 
         <div class="admin-form-field">
@@ -587,10 +602,17 @@
 
 <div class="admin-modal-backdrop" *ngIf="isDeleteModalOpen" adminModalBackdrop (dismiss)="closeDeleteModal()">
   <div class="admin-modal admin-modal-confirm">
-    <h4 class="admin-modal-title">{{ 'ADMIN.COMMON.DELETE_CONFIRM_TITLE' | translate }}</h4>
-    <p class="admin-modal-subtitle">
+    <h4 class="admin-modal-title">{{ deleteModalTitleKey | translate }}</h4>
+    <p class="admin-modal-subtitle" *ngIf="deleteModalMode === 'delete'">
       {{ 'ADMIN.COMMON.DELETE_CONFIRM_MESSAGE' | translate }}
       <strong *ngIf="selectedSchedule">{{ selectedSchedule.tripId }}</strong>
+    </p>
+    <!-- OBRS-283: deletable===false — soft-cancel copy instead of the hard-delete warning above. -->
+    <p class="admin-modal-subtitle" *ngIf="deleteModalMode === 'cancel-refund'">
+      {{ 'ADMIN.COMMON.CANCEL_TRIP_REFUND_MESSAGE' | translate: { count: selectedSchedule?.confirmedBookingCount ?? 0 } }}
+    </p>
+    <p class="admin-modal-subtitle" *ngIf="deleteModalMode === 'cancel-no-refund'">
+      {{ 'ADMIN.COMMON.CANCEL_TRIP_NO_REFUND_MESSAGE' | translate }}
     </p>
 
     <div class="admin-modal-actions">
@@ -603,7 +625,7 @@
         [disabled]="isDeleting"
         (click)="confirmDelete()"
       >
-        {{ isDeleting ? ('ADMIN.COMMON.DELETING' | translate) : ('ADMIN.COMMON.DELETE' | translate) }}
+        {{ deleteModalConfirmLabelKey | translate }}
       </button>
     </div>
   </div>

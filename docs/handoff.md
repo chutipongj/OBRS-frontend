@@ -70,12 +70,87 @@ The DB `Lookup` slug and all i18n translations (EN: `Paid`, TH: `ชำระแ
 
 ## Contract Requests (Frontend → Backend)
 
+### [Frontend] 2026-07-11 — Per-round revenue settlement + owner cash-handover sign-off (OBRS-196): endpoints not yet in contract
+
+> **RESOLVED 2026-07-11** — backend landed (commit `037cdb1`). Two contract breaks were found and fixed against the real
+> `SettlementController`/`docs/api/settlements.md`:
+> 1. **URL**: base path is `/api/private/settlements` — **no `/admin/` segment** (`EndpointConstant.PRIVATE_SETTLEMENTS`).
+>    Everything below was 404ing against the real backend until `AdminApiService`'s 3 methods were corrected.
+> 2. **Settled breakdown is a thinner shape than live**: `settled.byMethod[]`/`settled.byChannel[]` are `{method,amount}` /
+>    `{channel,amount}` only (no `ticketCount`, no `remote` — the frozen snapshot only stores amounts), vs. the live
+>    breakdown's full `{method,amount,ticketCount}` / `{channel,amount,ticketCount,remote}`. Also reconciled: the pending
+>    item has no `status`/`routeLabel`/`totalAmount`/`currency` fields (it's `{scheduleId, originStopId, originStopSlug,
+>    departureDateTime, routeSlug, liveTotalAmount, ticketCount}` — every row is definitionally PENDING, so the list's
+>    status pill is now a static badge, not a per-item bind), the pending list wraps in `{range, items}` (no
+>    `totalElements`), `discrepancy` is `{hasDiscrepancy, settledTotal, liveTotal, deltaAmount}` (not
+>    `differenceAmount`), and `settled` carries `{totalAmount, byMethod, byChannel, settledBy, settledByName,
+>    settledAt}` (not `acknowledgedTotalAmount`). `SettlementDetailModalComponent` now renders two distinct breakdown
+>    table blocks gated on `detail.status` (PENDING → `detail.live.*`, full columns; SETTLED → `detail.settled.*`,
+>    amount-only columns) instead of always rendering the live breakdown. All shapes reconciled directly against
+>    `SettlementSummaryRespDto`/`SettlementLiveRespDto`/`SettlementSettledRespDto`/`SettlementPendingItemRespDto`/
+>    `SettlementPendingListRespDto`/`SettlementDiscrepancyRespDto` in the backend worktree. `shared/interfaces/settlement.interface.ts`,
+>    `AdminApiService`, `SettlementsPendingStore`, `SettlementsPageComponent`, `SettlementsListComponent`, and
+>    `SettlementDetailModalComponent` were all updated; i18n untouched (no key renames needed). Regression-locked with
+>    new `HttpTestingController` tests in `admin-api.service.spec.ts` asserting the exact corrected URLs (mirrors the
+>    OBRS-85 precedent above), plus spec coverage for the thin settled-breakdown shape.
+>
+> Original entry kept below for history.
+
+**Affected endpoints**:
+- `GET /api/private/settlements/pending?from=&to=` (new)
+- `GET /api/private/settlements/schedules/{scheduleId}` (new)
+- `POST /api/private/settlements/schedules/{scheduleId}/confirm` (new)
+
+**Request type**: New endpoints (all three).
+
+**Status at time of writing**: this frontend work (branch `ao/revenue-settlement`) was built against the OBRS-196 contract given directly by the task orchestrator (route paths, DTO shapes, and the exact `errorCode` set) in parallel with the paired backend worktree `OBRS-backend-wt-revenue-settlement` — checked and confirmed clean/unstarted there at time of writing (no `Settlement*` controller/service/DTO exists yet). Same parallel-lane pattern already used for OBRS-129/OBRS-96/OBRS-110 above, not an assumption that an undocumented endpoint already exists.
+
+### What the frontend needs
+| Field / Change | Location | Reason |
+|---|---|---|
+| `GET /api/private/admin/settlements/pending?from&to` → `{ items: [{ scheduleId, routeLabel, departureDateTime, status: 'PENDING'\|'SETTLED', totalAmount, currency, ticketCount }], totalElements }` | New endpoint, OWNER scope (route `requiredRoles: ['owner']`; ADMIN admitted via `ROLE_GRANTS['admin']` including `'owner'`) | Backs the settlements list/date-range filter (`SettlementsPendingStore`, mirrors `ReportsStore`'s OBRS-40 range-cache pattern) |
+| `GET /api/private/admin/settlements/schedules/{scheduleId}` → `{ scheduleId, routeLabel, departureDateTime, status, currency: 'THB', live: { totalAmount, onSiteTotal, agencyTotal, passengerCount, ticketCount, byMethod: [{method, amount, ticketCount}], byChannel: [{channel, amount, ticketCount, remote}] }, settled: { settledByName, settledAt, acknowledgedTotalAmount } \| null, discrepancy: { hasDiscrepancy, differenceAmount } \| null }` | New endpoint | Backs the detail modal's breakdown tables + settled/discrepancy info card |
+| `POST /api/private/admin/settlements/schedules/{scheduleId}/confirm` — body `{ acknowledgedTotalAmount }` (the FE always sends it, sourced from `detail.live.totalAmount`) → same shape as the GET detail (status flips to `SETTLED`) | New endpoint | Owner cash-handover sign-off; FE removes the row optimistically on success (`store.mutate`) since `SETTLED` rows are assumed excluded from the pending list server-side |
+| `errorCode` values `SETTLEMENT_ALREADY_SETTLED`, `SETTLEMENT_AMOUNT_MISMATCH`, `SETTLEMENT_SCOPE_FORBIDDEN`, `SETTLEMENT_ROUND_NOT_DEPARTED`, `SETTLEMENT_SCHEDULE_NOT_FOUND` on the confirm endpoint's error response | Confirm endpoint's error contract | FE branches on each (never the localized message) — `ALREADY_SETTLED` refetches + swaps to the settled view (not an error toast), `AMOUNT_MISMATCH` forces a fresh GET instead of resubmitting the stale amount, the rest close the modal + refresh the list |
+| `method` values match `EPaymentMethod` 1:1 (`cash`, `card`, `bank_transfer`, `qr_promptpay`, `truemoney`, `shopeepay`, `rabbit_linepay`, `other`); `channel` values match `EBookingChannel` 1:1 (`online`, `walk_in`, `agent`, `kiosk`) | `byMethod[].method` / `byChannel[].channel` | Confirmed directly against `OBRS-backend/src/main/java/com/example/demo/enums/{EPaymentMethod,EBookingChannel}.java` (8 / 4 values respectively) — FE i18n keys (`ADMIN.SETTLEMENTS.METHOD.*` / `.CHANNEL.*`) are a 1:1 map of these exact slugs, including `METHOD.OTHER` for the backend's untracked-method bucket |
+
+### What the frontend implemented (additive-safe, new page)
+- `SettlementsPendingStore` (`modules/admin/pages/settlements/settlements.store.ts`, root-scoped SWR, mirrors `ReportsStore`), `SettlementsPageComponent` (smart), `SettlementsListComponent`/`SettlementDetailModalComponent` (dumb), 3 new `AdminApiService` methods, `shared/interfaces/settlement.interface.ts`, the `/admin/settlements` route (`requiredRoles: ['owner']`) and a role-gated sidebar nav item (`AdminLayoutComponent.buildNavItems()`, mirroring `StaffLayoutComponent`'s existing role-gated nav pattern).
+
+### Impact if not addressed
+The settlements page is implemented and additive-safe (new route, new nav item, no existing endpoint/field touched), but functionally inert until the backend ships these three endpoints — the list will show the error state, and no round can be settled. Do not merge to `dev`/`sit` until the backend implements this feature (or confirms a shape/errorCode mismatch requiring a frontend follow-up) — track against the paired backend worktree `OBRS-backend-wt-revenue-settlement` before promoting either side.
+
 > **⭐ RECONCILIATION — 2026-07-09 (FE↔BE handoff-gap sweep):** every Contract Request below has since **landed on `origin/dev` on both sides and is live on SIT** — verified end-to-end. These entries are kept for history; none is still open.
 > - **Promo code system (OBRS-109 / #37)** — RESOLVED. Backend `PromotionController` (`POST /api/private/promotions/validate`), `AdminPromotionCrudController` (full CRUD under `/api/private/admin/promotions`), `PromotionCodeService`, and the `promotionCode` booking field are all on `origin/dev`. FE `promotion.service.ts` + `promo-code-field.component` match (path + `PROMO_CODE_*` errorCodes). Live SIT: `validate` bogus code → `404 {errorCode: PROMO_CODE_NOT_FOUND}`; `GET /admin/promotions` → `403` for customer (exists + role-gated).
 > - **Usability report reporter email (OBRS-108)** — RESOLVED. Backend `reporterEmail` on `UsabilityReportController`/`UsabilityReportDetailRespDto`/model + `UsabilityReportSubmitReporterEmailIT`; FE UI (`report-usability-fab`, admin detail row) on `origin/dev`.
 > - **Change seat (OBRS-110)** — RESOLVED. Backend `ChangeSeatService` + `ChangeSeatReqDto`/`ChangeSeatAvailabilityRespDto`/`ChangeSeatException` on `origin/dev`; FE consumed it, and the label→numeric seat-number contract mismatch was fixed live under **OBRS-171** (`shared/lib/seat-number.ts`).
 > - **Usability Report triage workflow (OBRS-86)** — RESOLVED. Backend `EUsabilityReportStatus` (incl. `accepted`), `UpdateUsabilityReportStatusReqDto` (`triageNote`), `triagedBy`/`triagedAt`/`jiraIssueKey` on `UsabilityReportDetailRespDto` + `UsabilityReportTriageIT`; FE triage UI on `origin/dev` (see also OBRS-174).
 > - **Round-trip promotion admin endpoints (OBRS-85), incl. the OWNER/ADMIN access gap** — RESOLVED. Backend keeps `@PreAuthorize("hasRole('OWNER')")` but the `RoleHierarchyImpl` (`ROLE_ADMIN > ROLE_OWNER > …`) lets ADMIN satisfy it; FE **OBRS-176** made `owner` an all-access superset that can reach `/admin`. Live SIT: **both** owner and admin get `200` on `/admin/promotions` and `/admin/promotions/round-trip`.
+
+### [Frontend] 2026-07-10 — Staff pre-departure boarding management (OBRS-130): board/unboard endpoints + manifest field not yet in contract
+**Affected endpoints/fields**:
+- `POST /api/private/tickets/{id}/board` (new — staff/operator manual board action, replaces `check-in` on this flow)
+- `POST /api/private/tickets/{id}/unboard` (new — salesperson/admin-only reversal of a boarding stamp)
+- `boardedBy` / `boardedByName` added to `BoardingListItemResponse` (`GET /api/private/schedules/{id}/boarding-list`)
+
+**Request type**: New endpoints + additive response fields.
+
+**Status at time of writing**: built against the locked OBRS-130 UX spec in parallel with the paired backend worktree `OBRS-backend-wt-obrs-130-boarding` — checked and confirmed still WIP there at time of writing (`TicketController` has `check-in`/`boarding-token`/`boarding-scan` only, no `board`/`unboard` mapping; `BoardingListItemResponse` has no `boardedBy`/`boardedByName` field; `Ticket.boardedBy` (a bare `Long` id) already exists from OBRS-96 but nothing resolves it to a display name yet). This is the same parallel-lane build pattern already used for OBRS-96/OBRS-129 below, not an assumption that an undocumented endpoint already exists.
+
+### What the frontend needs
+| Field / Change | Location | Reason |
+|---|---|---|
+| `POST /api/private/tickets/{id}/board` → `204`/empty `data` on success; `409 {errorCode: ALREADY_BOARDED}`, `409 {errorCode: TICKET_NOT_CONFIRMED}`, `400 {errorCode: BOARDING_WINDOW_NOT_OPEN}`, `404 {errorCode: TICKET_ERROR_ID_NOT_FOUND}` on failure | New endpoint | Manual "Board" button per manifest row (retires the `check-in` action from this flow — `checkIn()` has no other frontend consumer, removed from `staff-api.service.ts`) |
+| `POST /api/private/tickets/{id}/unboard` → same success shape; `409 {errorCode: NOT_BOARDED}` plus the same set as `board` | New endpoint, **salesperson/admin only** (`@PreAuthorize`) | "Un-board" button, hidden client-side for `driver` via `authService.hasAnyRole(['salesperson'])` — the backend role check is still the actual authority, FE gating is UX-only |
+| `boardedBy: number \| null`, `boardedByName: string \| null` added to each `BoardingListItemResponse` row | `GET /api/private/schedules/{id}/boarding-list` | Backend-resolved display name survives a refresh; FE only self-seeds a display name (`authService.getUsername()`) on the one row *this* operator just boarded via an optimistic update, never on a pre-existing boarded row (that was flagged as a misattribution risk during scrutinize) |
+| Both `board`/`unboard` never return a bare `401` for a domain-rejected action (mirrors the `boarding-scan` contract, OBRS-187 trap) | Error contract | FE sets `SKIP_AUTH_LOGOUT` on both calls as defense-in-depth regardless, per the existing `boarding-scan`/`booking.service.ts`/`promotion.service.ts` precedent |
+
+### What the frontend implemented (additive-safe)
+- `StaffApiService.board()`/`unboard()` (new methods) and `BoardingListItemDto.boardedBy`/`boardedByName` (new optional fields) are additive — no existing endpoint or field was changed. `checkIn()` and its `/check-in` call were removed (dead code — confirmed no other consumer in the frontend).
+- `BoardingListComponent` (`shared/components/boarding-list/`) treats `boardedAt != null` as the boarded signal (status-neutral, matching the backend's OBRS-96 `docs/adr/0030-boarding-state-model.md` design) and is additive-safe against both mount points: the existing `/staff/boarding/:scheduleId` route (unchanged guard/roles) and the new Sell Tab-3 mount in `walk-in-center-panel.component`.
+
+### Impact if not addressed
+The boarding manifest's Board/Un-board buttons will both fail with a `404`/whatever the router returns for an unmapped path (degrades gracefully — the button re-enables and the optimistic stamp reverts, no broken UI), and every row's "Boarded by" line will stay blank until the backend adds `boardedByName`. Do not merge to `dev`/`sit` until the backend implements `board`/`unboard` and the manifest field — track against the paired backend worktree before promoting either side.
 
 ### [Frontend] 2026-07-10 — Starter operational dashboard (OBRS-129): endpoint not yet in `docs/api/`
 **Affected endpoint**: `GET /api/private/admin/dashboard/today` (new)

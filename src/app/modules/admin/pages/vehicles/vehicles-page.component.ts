@@ -1,39 +1,41 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Subscription, firstValueFrom } from 'rxjs';
 import {
   AdminApiService,
   AdminLookupDto,
-  AdminStatusDto,
-  AdminTranslationCollection,
   AdminVehicleDto,
   AdminVehicleTypeDto,
-  CreateVehiclePayload,
-  getAdminLookupLabel,
-  getAdminTranslationLabel,
-  parseAdminStatus,
 } from '../../../../services/admin/admin-api.service';
 import { AlertService } from '../../../../shared/services/alert.service';
 import { extractApiErrorMessage } from '../../../../shared/lib/api-error';
 import { TranslateService } from '@ngx-translate/core';
+import { AuthService } from '../../../../auth/auth.service';
 import { VehiclesStore } from './vehicles.store';
+import {
+  Option,
+  VehicleRow,
+  filterMaintenanceStatusLookups,
+  filterVehiclesByStatus,
+  isVehicleStatusFilterStale,
+  statusClass,
+  toVehicleRow,
+  toVehicleStatusOptions,
+  toVehicleTypeOptions,
+} from './vehicles-page.mappers';
 
-interface VehicleRow {
-  id: number;
-  vehicleTypeSlug: string;
-  statusCode: string;
-  vehicleNumber: string;
-  plate: string;
-  vehicleType: string;
-  route: string;
-  status: string;
-}
-
-interface Option {
-  code: string;
-  label: string;
-}
-
+/**
+ * Vehicle management list + CRUD + maintenance focus (OBRS-91 / OBRS-209).
+ *
+ * OBRS-261 (Phase 2 split, mirroring promotions OBRS-251 and user-management
+ * OBRS-257): thinned down to an orchestrator. The list table, the
+ * create/edit form modal, and the delete-confirm modal are now child
+ * components (VehicleListTableComponent / VehicleFormModalComponent /
+ * VehicleDeleteModalComponent) — this page owns only the store
+ * subscriptions, localization, option lists, the status filter, the
+ * maintenance-tab focus state, and the modal open/close + delete
+ * orchestration state. `<app-vehicle-maintenance-panel>` is unrelated to
+ * this split and is untouched.
+ */
 @Component({
   selector: 'app-vehicles-page',
   templateUrl: './vehicles-page.component.html',
@@ -53,13 +55,30 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
 
   protected isFormModalOpen = false;
   protected isDeleteModalOpen = false;
-  protected isSubmitting = false;
   protected isDeleting = false;
-  protected isEditMode = false;
-  protected isEditDetailLoading = false;
+  protected mode: 'create' | 'edit' = 'create';
   protected selectedVehicle: VehicleRow | null = null;
 
-  protected readonly vehicleForm: FormGroup;
+  // OBRS-209: Maintenance tab — the tab bar mirrors SchedulesPageComponent's
+  // pattern (set/schedule tabs). "Maintenance" starts disabled until a
+  // vehicle row's "Manage maintenance" action focuses one.
+  protected activeTab: 'list' | 'maintenance' = 'list';
+  protected focusedVehicle: VehicleRow | null = null;
+  protected maintenanceStatusOptions: AdminLookupDto[] = [];
+  // Write affordances on the maintenance panel (Add + modal Save) are
+  // owner/admin only; the per-row "Manage maintenance" action itself is
+  // available to every reader. Computed once — single source of truth
+  // passed down to the panel as an @Input().
+  protected readonly canWriteMaintenance: boolean;
+
+  // Bound reloader passed to the form modal so it can refresh the list after
+  // it closes and shows its own success alert (arrow closes over `this`,
+  // mirroring PromotionsPageComponent.reloadStructureBound /
+  // UserManagementPageComponent.reloadStructureBound). Called LAST in the
+  // child's submitVehicle, after close + alert — same order as the
+  // pre-split store.refresh() call.
+  protected readonly reloadStructureBound = () => this.store.refresh();
+
   private readonly subscriptions = new Subscription();
 
   private rawVehicles: AdminVehicleDto[] = [];
@@ -68,17 +87,12 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
 
   constructor(
     private readonly adminApiService: AdminApiService,
-    private readonly formBuilder: FormBuilder,
     private readonly alertService: AlertService,
     private readonly translate: TranslateService,
-    private readonly store: VehiclesStore
+    private readonly store: VehiclesStore,
+    private readonly authService: AuthService
   ) {
-    this.vehicleForm = this.formBuilder.group({
-      vehicleType: ['', [Validators.required]],
-      numberPlate: ['', [Validators.required, Validators.maxLength(50)]],
-      vehicleNumber: ['', [Validators.required, Validators.maxLength(50)]],
-      status: ['', [Validators.required]],
-    });
+    this.canWriteMaintenance = this.authService.hasAnyRole(['owner']);
 
     // Language change only swaps displayed translations; data is already loaded,
     // so re-derive the view locally instead of re-fetching from the backend.
@@ -127,10 +141,6 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
     return this.isRefreshing && !this.store.hasValue;
   }
 
-  protected trackById(_index: number, item: VehicleRow): number {
-    return item.id;
-  }
-
   protected get totalVehicles(): number {
     return this.vehicles.length;
   }
@@ -144,21 +154,7 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
   }
 
   protected statusClass(status: string): string {
-    const normalizedStatus = status.toUpperCase();
-
-    if (
-      normalizedStatus === 'ACTIVE' ||
-      normalizedStatus === 'ONLINE' ||
-      normalizedStatus === 'AVAILABLE'
-    ) {
-      return 'is-success';
-    }
-
-    if (normalizedStatus === 'PENDING') {
-      return 'is-warning';
-    }
-
-    return 'is-danger';
+    return statusClass(status);
   }
 
   protected onStatusFilterChange(value: string): void {
@@ -166,93 +162,42 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
     this.applyVehicleFilter();
   }
 
+  protected setActiveTab(tab: 'list' | 'maintenance'): void {
+    // The Maintenance tab is disabled (visible, not hidden) until a vehicle
+    // is focused via the per-row "Manage maintenance" action.
+    if (tab === 'maintenance' && !this.focusedVehicle) {
+      return;
+    }
+    this.activeTab = tab;
+  }
+
+  // Per-row "Manage maintenance" action — copies
+  // SchedulesPageComponent.viewSchedulesForSet()'s focus pattern.
+  protected viewMaintenanceForVehicle(vehicle: VehicleRow): void {
+    this.focusedVehicle = vehicle;
+    this.activeTab = 'maintenance';
+  }
+
+  protected clearFocusedVehicle(): void {
+    this.focusedVehicle = null;
+    this.activeTab = 'list';
+  }
+
   protected openCreateModal(): void {
-    this.isEditMode = false;
+    this.mode = 'create';
     this.selectedVehicle = null;
-    this.vehicleForm.reset({
-      vehicleType: this.vehicleTypeOptions[0]?.code ?? '',
-      numberPlate: '',
-      vehicleNumber: '',
-      status: this.statusOptions[0]?.code ?? '',
-    });
     this.isFormModalOpen = true;
   }
 
-  protected async openEditModal(vehicle: VehicleRow): Promise<void> {
-    // Open the modal immediately with the row data we already hold, so it
-    // appears without waiting on the (slow on SIT) detail fetch. The server
-    // detail is patched in once it arrives — see the fetch below.
-    this.isEditMode = true;
+  protected openEditModal(vehicle: VehicleRow): void {
+    this.mode = 'edit';
     this.selectedVehicle = vehicle;
-    this.isEditDetailLoading = true;
-    this.applyVehicleFormValues(this.toVehicleDtoFallback(vehicle), vehicle);
     this.isFormModalOpen = true;
-
-    try {
-      const response = await firstValueFrom(this.adminApiService.getVehicleById(vehicle.id));
-      const vehicleDetail = response?.data ?? null;
-      // Ignore a stale response if the user has closed the modal or moved on
-      // to editing a different vehicle in the meantime.
-      if (vehicleDetail && this.isFormModalOpen && this.selectedVehicle?.id === vehicle.id) {
-        this.applyVehicleFormValues(vehicleDetail, vehicle, true);
-      }
-    } catch {
-      // Keep the fallback values already shown in the open modal.
-    } finally {
-      // Only clear the loading hint if this fetch is still the current one.
-      if (this.isFormModalOpen && this.selectedVehicle?.id === vehicle.id) {
-        this.isEditDetailLoading = false;
-      }
-    }
   }
 
-  // Populate the vehicle form from a DTO. When `onlyPristine` is set (the late
-  // detail patch), only controls the user hasn't started editing are filled,
-  // so the arriving server data never clobbers in-progress input.
-  private applyVehicleFormValues(
-    vehicleDetail: AdminVehicleDto,
-    vehicle: VehicleRow,
-    onlyPristine = false
-  ): void {
-    const values = {
-      vehicleType: String(vehicleDetail.vehicleType?.slug ?? vehicle.vehicleTypeSlug).trim(),
-      numberPlate: String(vehicleDetail.numberPlate ?? vehicle.plate).trim(),
-      vehicleNumber: String(vehicleDetail.vehicleNumber ?? vehicle.vehicleNumber).trim(),
-      status: this.parseStatus(vehicleDetail.status ?? vehicle.statusCode).code,
-    };
-
-    if (!onlyPristine) {
-      this.vehicleForm.reset(values);
-      return;
-    }
-
-    for (const [name, value] of Object.entries(values)) {
-      const control = this.vehicleForm.get(name);
-      if (control?.pristine) {
-        control.setValue(value);
-      }
-    }
-  }
-
-  private toVehicleDtoFallback(vehicle: VehicleRow): AdminVehicleDto {
-    return {
-      id: vehicle.id,
-      numberPlate: vehicle.plate,
-      vehicleNumber: vehicle.vehicleNumber,
-      status: vehicle.statusCode,
-      vehicleType: { id: 0, slug: vehicle.vehicleTypeSlug },
-    };
-  }
-
-  protected closeFormModal(force = false): void {
-    if (this.isSubmitting && !force) {
-      return;
-    }
-
+  protected onFormModalClosed(): void {
     this.isFormModalOpen = false;
-    this.isEditDetailLoading = false;
     this.selectedVehicle = null;
-    this.vehicleForm.reset();
   }
 
   protected openDeleteModal(vehicle: VehicleRow): void {
@@ -267,45 +212,6 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
 
     this.isDeleteModalOpen = false;
     this.selectedVehicle = null;
-  }
-
-  protected isFieldInvalid(fieldName: string): boolean {
-    const field = this.vehicleForm.get(fieldName);
-    return !!field && field.invalid && (field.dirty || field.touched);
-  }
-
-  protected async submitVehicle(): Promise<void> {
-    if (this.vehicleForm.invalid) {
-      this.vehicleForm.markAllAsTouched();
-      return;
-    }
-
-    this.isSubmitting = true;
-    try {
-      const payload = this.toVehiclePayload();
-
-      if (this.isEditMode && this.selectedVehicle) {
-        await firstValueFrom(
-          this.adminApiService.updateVehicle(this.selectedVehicle.id, payload)
-        );
-        this.closeFormModal(true);
-        await this.alertService.success(this.translate.instant('ADMIN.MESSAGES.UPDATED'));
-      } else {
-        await firstValueFrom(this.adminApiService.createVehicle(payload));
-        this.closeFormModal(true);
-        await this.alertService.success(this.translate.instant('ADMIN.MESSAGES.CREATED'));
-      }
-
-      await this.store.refresh();
-    } catch (error) {
-      this.closeFormModal(true);
-      const message =
-        extractApiErrorMessage(error) ||
-        this.translate.instant('ADMIN.MESSAGES.SAVE_FAILED');
-      await this.alertService.error(message);
-    } finally {
-      this.isSubmitting = false;
-    }
   }
 
   protected async confirmDelete(): Promise<void> {
@@ -342,59 +248,24 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
   private applyLocalization(): void {
     const currentLocale = this.getCurrentLocale();
 
-    this.vehicleTypeOptions = this.rawVehicleTypes.map((type) => ({
-      code: type.slug,
-      label:
-        this.getTranslationLabel(type.translations, currentLocale) ??
-        this.getTranslationLabel(type.translations, 'en') ??
-        type.slug,
-    }));
+    this.vehicleTypeOptions = toVehicleTypeOptions(this.rawVehicleTypes, currentLocale);
+    this.statusOptions = toVehicleStatusOptions(this.rawLookups, currentLocale);
 
-    this.statusOptions = this.rawLookups
-      .filter((lookup) => lookup.category === 'vehicle_status')
-      .map((lookup) => ({
-        code: lookup.slug,
-        label:
-          this.getTranslationLabel(lookup.translations, currentLocale) ??
-          this.getTranslationLabel(lookup.translations, 'en') ??
-          lookup.slug,
-      }));
+    // OBRS-209: raw Lookup rows (not pre-mapped to Option[]) — the
+    // maintenance panel derives its own localized labels, mirroring how this
+    // page derives statusOptions above.
+    this.maintenanceStatusOptions = filterMaintenanceStatusLookups(this.rawLookups);
 
-    this.vehicles = this.rawVehicles.map((vehicle) => this.toVehicleRow(vehicle));
+    this.vehicles = this.rawVehicles.map((vehicle) => toVehicleRow(vehicle, currentLocale));
     this.syncStatusFilterWithAvailableOptions();
     this.applyVehicleFilter();
   }
 
-  private toVehiclePayload(): CreateVehiclePayload {
-    return {
-      vehicleType: String(this.vehicleForm.value['vehicleType'] ?? '').trim().toLowerCase(),
-      numberPlate: String(this.vehicleForm.value['numberPlate'] ?? '').trim(),
-      vehicleNumber: String(this.vehicleForm.value['vehicleNumber'] ?? '').trim(),
-      status: String(this.vehicleForm.value['status'] ?? '').trim().toLowerCase(),
-    };
-  }
-
-  private toVehicleRow(vehicle: AdminVehicleDto): VehicleRow {
-    const status = this.parseStatus(vehicle.status);
-    const currentLocale = this.getCurrentLocale();
-
-    return {
-      id: vehicle.id,
-      vehicleTypeSlug: vehicle.vehicleType?.slug ?? '',
-      statusCode: status.code,
-      vehicleNumber: vehicle.vehicleNumber ?? '-',
-      plate: vehicle.numberPlate ?? '-',
-      vehicleType:
-        getAdminLookupLabel(vehicle.vehicleType, currentLocale) ??
-        this.getTranslationLabel(vehicle.vehicleType?.translations, currentLocale) ??
-        this.getTranslationLabel(vehicle.vehicleType?.translations, 'en') ??
-        vehicle.vehicleType?.slug ??
-        '-',
-      route: '-',
-      status: status.name,
-    };
-  }
-
+  // NOTE: `||` short-circuit is deliberate — translate.getDefaultLang() must
+  // only be called when currentLang is falsy (some TranslateService stubs
+  // don't implement it). Kept un-extracted for the same reason the other
+  // admin pages (promotions/role/user/schedules/routes) keep their
+  // getCurrentLocale private rather than moving it to the mappers file.
   private getCurrentLocale(): string {
     const rawLocale = String(
       this.translate.currentLang || this.translate.getDefaultLang() || 'th'
@@ -403,39 +274,12 @@ export class VehiclesPageComponent implements OnInit, OnDestroy {
     return rawLocale.startsWith('en') ? 'en' : 'th';
   }
 
-  private getTranslationLabel(
-    translations: AdminTranslationCollection | null | undefined,
-    locale?: string
-  ): string | null {
-    return getAdminTranslationLabel(translations, locale);
-  }
-
-  private parseStatus(value: string | AdminStatusDto | null | undefined): {
-    code: string;
-    name: string;
-  } {
-    return parseAdminStatus(value, this.getCurrentLocale());
-  }
-
   private applyVehicleFilter(): void {
-    const statusFilter = this.selectedStatusFilter;
-
-    this.filteredVehicles = this.vehicles.filter((vehicle) => {
-      if (statusFilter.length === 0) {
-        return true;
-      }
-
-      return vehicle.statusCode.trim().toLowerCase() === statusFilter;
-    });
+    this.filteredVehicles = filterVehiclesByStatus(this.vehicles, this.selectedStatusFilter);
   }
 
   private syncStatusFilterWithAvailableOptions(): void {
-    if (
-      this.selectedStatusFilter &&
-      !this.statusOptions.some(
-        (option) => option.code.trim().toLowerCase() === this.selectedStatusFilter
-      )
-    ) {
+    if (isVehicleStatusFilterStale(this.selectedStatusFilter, this.statusOptions)) {
       this.selectedStatusFilter = '';
     }
   }

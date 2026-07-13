@@ -99,14 +99,25 @@
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label">{{ 'STAFF.SCHEDULES.DEPARTURE_DATE' | translate }}</label>
-              <p-calendar formControlName="departureDate" [showIcon]="true" dateFormat="yy-mm-dd"
-                          [class.is-invalid]="isFieldInvalid('departureDate')"></p-calendar>
+              <p-calendar formControlName="departureDate" [showIcon]="true" [iconDisplay]="'input'" dateFormat="yy-mm-dd"
+                          styleClass="app-date-field" panelStyleClass="app-date-field-panel"
+                          [class.is-invalid]="isFieldInvalid('departureDate')">
+                <ng-template pTemplate="inputicon">
+                  <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+                </ng-template>
+              </p-calendar>
               <div class="invalid-feedback d-block" *ngIf="isFieldInvalid('departureDate')">{{ 'ADMIN.VALIDATION.REQUIRED' | translate }}</div>
             </div>
             <div class="col-md-6">
               <label class="form-label">{{ 'STAFF.SCHEDULES.DEPARTURE_TIME' | translate }}</label>
               <p-calendar formControlName="departureTime" [timeOnly]="true" hourFormat="24"
-                          [class.is-invalid]="isFieldInvalid('departureTime')"></p-calendar>
+                          [showIcon]="true" [iconDisplay]="'input'"
+                          styleClass="app-date-field" panelStyleClass="app-date-field-panel"
+                          [class.is-invalid]="isFieldInvalid('departureTime')">
+                <ng-template pTemplate="inputicon">
+                  <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+                </ng-template>
+              </p-calendar>
               <div class="invalid-feedback d-block" *ngIf="isFieldInvalid('departureTime')">{{ 'ADMIN.VALIDATION.REQUIRED' | translate }}</div>
             </div>
             <div class="col-md-6">
@@ -154,11 +165,20 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_TITLE' | translate }}</h5>
+        <h5 class="modal-title">
+          {{ (deleteModalMode === 'delete' ? 'ADMIN.MESSAGES.DELETE_CONFIRM_TITLE' : 'ADMIN.MESSAGES.CANCEL_TRIP_CONFIRM_TITLE') | translate }}
+        </h5>
         <button class="btn-close" (click)="closeDeleteModal()"></button>
       </div>
       <div class="modal-body">
-        <p>{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_BODY' | translate }}</p>
+        <p *ngIf="deleteModalMode === 'delete'">{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_BODY' | translate }}</p>
+        <!-- OBRS-283: deletable===false — soft-cancel copy instead of the hard-delete warning above. -->
+        <p *ngIf="deleteModalMode === 'cancel-refund'">
+          {{ 'ADMIN.MESSAGES.CANCEL_TRIP_REFUND_BODY' | translate: { count: selectedRow?.confirmedBookingCount ?? 0 } }}
+        </p>
+        <p *ngIf="deleteModalMode === 'cancel-no-refund'">
+          {{ 'ADMIN.MESSAGES.CANCEL_TRIP_NO_REFUND_BODY' | translate }}
+        </p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" (click)="closeDeleteModal()" [disabled]="isDeleting">
@@ -166,7 +186,7 @@
         </button>
         <button class="btn btn-danger" (click)="confirmDelete()" [disabled]="isDeleting">
           <span *ngIf="isDeleting" class="spinner-border spinner-border-sm me-1"></span>
-          {{ 'ADMIN.MESSAGES.DELETE_BTN' | translate }}
+          {{ (deleteModalMode === 'delete' ? 'ADMIN.MESSAGES.DELETE_BTN' : 'ADMIN.MESSAGES.CANCEL_TRIP_BTN') | translate }}
         </button>
       </div>
     </div>

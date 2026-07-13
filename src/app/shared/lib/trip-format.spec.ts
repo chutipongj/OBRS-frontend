@@ -4,8 +4,31 @@ import {
   durationMinutes,
   durationMinutesTotal,
   formatTimeHHMM,
+  isLowSeatCount,
   parsePricePerSeat,
+  tripEstimateFromStops,
 } from './trip-format';
+import { RouteStop } from '../interfaces/route-map.interface';
+import { BookingTicketStop } from '../interfaces/booking-ticket.interface';
+
+function makeStop(
+  distanceKmFromOrigin: number | null,
+  offsetMinutesFromOrigin: number | null
+): RouteStop {
+  return {
+    order: 1,
+    slug: 'stop',
+    name: 'Stop',
+    address: 'Addr',
+    approxTime: '05:00',
+    distanceKmFromOrigin,
+    offsetMinutesFromOrigin,
+    latitude: null,
+    longitude: null,
+    primaryPhotoUrl: null,
+    googleMapsUrl: null,
+  };
+}
 
 describe('trip-format', () => {
   describe('formatTimeHHMM', () => {
@@ -60,6 +83,94 @@ describe('trip-format', () => {
     it('falls back to 0 for non-finite/missing input', () => {
       expect(parsePricePerSeat(null)).toBe(0);
       expect(parsePricePerSeat('abc')).toBe(0);
+    });
+  });
+
+  describe('isLowSeatCount', () => {
+    it('is true when seats equal the threshold (inclusive)', () => {
+      expect(isLowSeatCount(5, 5)).toBe(true);
+    });
+
+    it('is false when seats exceed the threshold', () => {
+      expect(isLowSeatCount(6, 5)).toBe(false);
+    });
+
+    it('is false when seats are 0 (sold-out rows never reach this component)', () => {
+      expect(isLowSeatCount(0, 5)).toBe(false);
+    });
+
+    it('is false when seats are null/undefined', () => {
+      expect(isLowSeatCount(null, 5)).toBe(false);
+      expect(isLowSeatCount(undefined, 5)).toBe(false);
+    });
+  });
+
+  describe('tripEstimateFromStops', () => {
+    it('computes the absolute delta for both distance and duration', () => {
+      const pickup = makeStop(10, 15);
+      const dropoff = makeStop(55, 60);
+      expect(tripEstimateFromStops(pickup, dropoff)).toEqual({
+        distanceKm: 45,
+        durationMinutes: 45,
+      });
+    });
+
+    it('is order-independent (abs of the delta)', () => {
+      const pickup = makeStop(55, 60);
+      const dropoff = makeStop(10, 15);
+      expect(tripEstimateFromStops(pickup, dropoff)).toEqual({
+        distanceKm: 45,
+        durationMinutes: 45,
+      });
+    });
+
+    it('never fabricates 0 — a missing distance yields null distanceKm only', () => {
+      const pickup = makeStop(null, 15);
+      const dropoff = makeStop(55, 60);
+      expect(tripEstimateFromStops(pickup, dropoff)).toEqual({
+        distanceKm: null,
+        durationMinutes: 45,
+      });
+    });
+
+    it('never fabricates 0 — a missing offset yields null durationMinutes only', () => {
+      const pickup = makeStop(10, null);
+      const dropoff = makeStop(55, 60);
+      expect(tripEstimateFromStops(pickup, dropoff)).toEqual({
+        distanceKm: 45,
+        durationMinutes: null,
+      });
+    });
+
+    it('returns both null when pickup or dropoff is missing entirely', () => {
+      expect(tripEstimateFromStops(null, makeStop(55, 60))).toEqual({
+        distanceKm: null,
+        durationMinutes: null,
+      });
+      expect(tripEstimateFromStops(makeStop(10, 15), undefined)).toEqual({
+        distanceKm: null,
+        durationMinutes: null,
+      });
+    });
+
+    it('accepts a BookingTicketStop-shaped object (widened TripStopOffsets signature)', () => {
+      const pickup: BookingTicketStop = {
+        code: 'a',
+        label: 'Station A',
+        distanceKmFromOrigin: 10,
+        offsetMinutesFromOrigin: 15,
+      };
+      const dropoff: BookingTicketStop = {
+        code: 'b',
+        label: 'Station B',
+        distanceKmFromOrigin: 55,
+        offsetMinutesFromOrigin: 60,
+      };
+
+      expect(tripEstimateFromStops(pickup, dropoff)).toEqual({
+        distanceKm: 45,
+        durationMinutes: 45,
+      });
     });
   });
 });

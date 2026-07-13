@@ -19,7 +19,14 @@ import {
   UsabilityReportStatus,
 } from '../../shared/interfaces/usability-report.interface';
 import { ReportsSummaryDto } from '../../shared/interfaces/reports-summary.interface';
+import { EodSalesReportDto } from '../../shared/interfaces/eod-sales-report.interface';
+import { RefundVoidReportDto } from '../../shared/interfaces/refund-void-report.interface';
+import { CashOnlineReconciliationReportDto } from '../../shared/interfaces/cash-online-reconciliation-report.interface';
 import { DashboardTodayDto } from '../../shared/interfaces/dashboard-today.interface';
+import {
+  SettlementPendingPageDto,
+  SettlementScheduleDetailDto,
+} from '../../shared/interfaces/settlement.interface';
 
 export interface AdminTranslationDto {
   locale?: string;
@@ -84,6 +91,10 @@ export interface AdminUserDto {
   roles: Array<string | AdminRoleDto>;
   locked?: boolean;
   accountLockedUntil?: string | null;
+  // OBRS-193: salesperson's assigned pickup stop (stop slug), used by the staff
+  // walk-in sell page to default the pickup selection. Null/absent = no assigned
+  // sales point (falls back to route origin, same as before this field existed).
+  salesPointStop?: string | null;
 }
 
 export interface LayoutResponse {
@@ -110,6 +121,23 @@ export interface AdminVehicleDto {
   vehicleNumber?: string;
   status?: string | AdminStatusDto;
   vehicleType?: AdminVehicleTypeDto;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** OBRS-209: a single vehicle-maintenance record (backend OBRS-102).
+ * `maintenanceStatus` is a flat `maintenance_status` Lookup **slug string**
+ * (e.g. "scheduled"), NOT a Lookup object — mirrors `AdminVehicleDto.status`'s
+ * plain-string shape, confirmed against the live `VehicleMaintenanceRespDto`. */
+export interface AdminVehicleMaintenanceDto {
+  id: number;
+  vehicleId: number;
+  reason: string;
+  startDate: string;
+  endDate?: string | null;
+  nextDueDate?: string | null;
+  maintenanceStatus: string;
+  notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -209,6 +237,23 @@ export interface AdminScheduleDto {
   driver?: AdminDriverInfoDto;
   /** Overridden seating capacity; null means use vehicleType.totalSeats as the effective value. */
   seatingCapacity?: number | null;
+  // OBRS-283: whether this trip can still be hard-DELETEd (no booking history
+  // referencing it). `false` means the delete button must instead soft-cancel
+  // via `POST /schedules/{id}/cancel` — see shared/lib/schedule-delete-mode.ts.
+  // Optional/undefined on a cached row predating this field, or on a Schedule
+  // Set row (a different endpoint/DTO — sets never carry this field).
+  deletable?: boolean;
+  /** OBRS-283: count of CONFIRMED bookings affected by cancelling this trip
+   * (drives the refund vs. no-refund confirm-dialog copy). */
+  confirmedBookingCount?: number;
+}
+
+// OBRS-283: response of POST /api/private/schedules/{id}/cancel (soft-cancel —
+// flips status to CANCELLED; affected CONFIRMED bookings are refunded async).
+export interface CancelScheduleRespDto {
+  scheduleId: number;
+  status: string;
+  affectedBookingCount: number;
 }
 
 export interface AdminPersonDto {
@@ -447,6 +492,19 @@ export interface CreateVehiclePayload {
   status: string;
 }
 
+/** OBRS-209: create/update payload for a vehicle-maintenance record.
+ * `maintenanceStatus` is the `maintenance_status` Lookup's **slug string**
+ * (e.g. "scheduled") — same shape as `CreateVehiclePayload.status`, matching
+ * the live backend `VehicleMaintenanceReqDto` (`@NotBlank String maintenanceStatus`). */
+export interface CreateVehicleMaintenancePayload {
+  reason: string;
+  startDate: string;
+  endDate?: string | null;
+  nextDueDate?: string | null;
+  maintenanceStatus: string;
+  notes?: string | null;
+}
+
 export interface CreateRoutePayload {
   slug: string;
   status: string;
@@ -540,6 +598,15 @@ export interface UpdateRoundTripPromotionPayload {
   startDateTime?: string | null;
   endDateTime?: string | null;
   minBookingAmount?: number;
+}
+
+// OBRS-223: reminder-timing config, a singleton row (like the round-trip
+// promotion above) — GET/PUT `/api/private/admin/configs/reminders`, shipped
+// backend-only by OBRS-139. Both fields are required positive integers on
+// the wire; the backend evicts its cache after PUT (no FE cache concern).
+export interface ReminderConfigDto {
+  reminderHoursBeforeDeparture: number;
+  boardingReminderMinutesBeforeDeparture: number;
 }
 
 @Injectable({
@@ -706,6 +773,45 @@ export class AdminApiService {
     return this.deleteRequest<unknown>(`${this.baseUrl}/private/vehicles/${id}`);
   }
 
+  // OBRS-209: vehicle maintenance records (backend OBRS-102). No hard delete —
+  // a record is closed via updateVehicleMaintenance() with maintenanceStatus
+  // set to the "completed" Lookup slug.
+  getVehicleMaintenance(vehicleId: number): Observable<ResponseAPI<AdminVehicleMaintenanceDto[]>> {
+    return this.getRequest<AdminVehicleMaintenanceDto[]>(
+      `${this.baseUrl}/private/vehicles/${vehicleId}/maintenance`
+    );
+  }
+
+  getVehicleMaintenanceById(
+    vehicleId: number,
+    id: number
+  ): Observable<ResponseAPI<AdminVehicleMaintenanceDto>> {
+    return this.getRequest<AdminVehicleMaintenanceDto>(
+      `${this.baseUrl}/private/vehicles/${vehicleId}/maintenance/${id}`
+    );
+  }
+
+  createVehicleMaintenance(
+    vehicleId: number,
+    payload: CreateVehicleMaintenancePayload
+  ): Observable<ResponseAPI<unknown>> {
+    return this.postRequest<unknown>(
+      `${this.baseUrl}/private/vehicles/${vehicleId}/maintenance`,
+      payload
+    );
+  }
+
+  updateVehicleMaintenance(
+    vehicleId: number,
+    id: number,
+    payload: CreateVehicleMaintenancePayload
+  ): Observable<ResponseAPI<unknown>> {
+    return this.putRequest<unknown>(
+      `${this.baseUrl}/private/vehicles/${vehicleId}/maintenance/${id}`,
+      payload
+    );
+  }
+
   getVehicleTypes(): Observable<ResponseAPI<AdminVehicleTypeDto[]>> {
     return this.getRequest<AdminVehicleTypeDto[]>(`${this.baseUrl}/private/vehicle-types`);
   }
@@ -808,6 +914,15 @@ export class AdminApiService {
     return this.deleteRequest<unknown>(`${this.baseUrl}/private/schedules/${id}`);
   }
 
+  // OBRS-283: soft-cancel — used instead of deleteSchedule() when the row's
+  // `deletable` field is `false` (see shared/lib/schedule-delete-mode.ts).
+  cancelSchedule(id: number): Observable<ResponseAPI<CancelScheduleRespDto>> {
+    return this.postRequest<CancelScheduleRespDto>(
+      `${this.baseUrl}/private/schedules/${id}/cancel`,
+      {}
+    );
+  }
+
   generateSchedulesFromSet(id: number): Observable<ResponseAPI<unknown>> {
     return this.postRequest<unknown>(
       `${this.baseUrl}/private/schedule-set/${id}/generate-schedules`,
@@ -871,6 +986,71 @@ export class AdminApiService {
     return this.getRequest<DashboardTodayDto>(`${this.baseUrl}/private/admin/dashboard/today`);
   }
 
+  // OBRS-196: per-round revenue settlement + owner cash-handover sign-off.
+  // Base path is `/api/private/settlements` — NO `/admin/` segment
+  // (`EndpointConstant.PRIVATE_SETTLEMENTS`, confirmed against the landed
+  // backend commit 037cdb1 / docs/api/settlements.md). `SettlementController`
+  // is `@PreAuthorize("hasRole('OWNER')")`; ADMIN inherits via the backend's
+  // ROLE_ADMIN > ROLE_OWNER hierarchy and additionally bypasses scoping.
+  getSettlementsPending(
+    from: string,
+    to: string
+  ): Observable<ResponseAPI<SettlementPendingPageDto>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.getRequest<SettlementPendingPageDto>(
+      `${this.baseUrl}/private/settlements/pending`,
+      params
+    );
+  }
+
+  // End-of-day Sales Report by Salesperson (OBRS-97/OBRS-231): single-day, staff-sold-only
+  // (walk_in/agent/kiosk) revenue by salesperson. See ../OBRS-backend/docs/api/reports.md.
+  getEodSalesReport(date: string): Observable<ResponseAPI<EodSalesReportDto>> {
+    const params = new HttpParams().set('date', date);
+    return this.getRequest<EodSalesReportDto>(
+      `${this.baseUrl}/private/admin/reports/eod-salesperson`,
+      params
+    );
+  }
+
+  // OBRS-98: refund / void summary report — mirrors getReportsSummary's [from, to]
+  // HttpParams shape.
+  getRefundVoidReport(from: string, to: string): Observable<ResponseAPI<RefundVoidReportDto>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.getRequest<RefundVoidReportDto>(
+      `${this.baseUrl}/private/admin/reports/refund-void`,
+      params
+    );
+  }
+
+  getCashOnlineReconciliationReport(
+    from: string,
+    to: string
+  ): Observable<ResponseAPI<CashOnlineReconciliationReportDto>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.getRequest<CashOnlineReconciliationReportDto>(
+      `${this.baseUrl}/private/admin/reports/cash-online-reconciliation`,
+      params
+    );
+  }
+
+  getSettlementSchedule(id: number): Observable<ResponseAPI<SettlementScheduleDetailDto>> {
+    return this.getRequest<SettlementScheduleDetailDto>(
+      `${this.baseUrl}/private/settlements/schedules/${id}`
+    );
+  }
+
+  confirmSettlement(
+    id: number,
+    acknowledgedTotalAmount?: string
+  ): Observable<ResponseAPI<SettlementScheduleDetailDto>> {
+    const payload = acknowledgedTotalAmount !== undefined ? { acknowledgedTotalAmount } : {};
+    return this.postRequest<SettlementScheduleDetailDto>(
+      `${this.baseUrl}/private/settlements/schedules/${id}/confirm`,
+      payload
+    );
+  }
+
   // Backs the admin sidebar's "Usability Reports" nav badge — reuses the
   // existing list endpoint with size=1 so only the pagination envelope
   // (data.totalElements) is needed, not the report rows themselves.
@@ -914,6 +1094,21 @@ export class AdminApiService {
   ): Observable<ResponseAPI<unknown>> {
     return this.patchRequest<unknown>(
       `${this.baseUrl}/private/admin/promotions/round-trip`,
+      payload
+    );
+  }
+
+  // OBRS-223: reminder-timing config is a singleton row (like the round-trip
+  // promotion above), ADMIN-only (403 for non-admin per the backend contract).
+  getReminderConfig(): Observable<ResponseAPI<ReminderConfigDto>> {
+    return this.getRequest<ReminderConfigDto>(`${this.baseUrl}/private/admin/configs/reminders`);
+  }
+
+  updateReminderConfig(
+    payload: ReminderConfigDto
+  ): Observable<ResponseAPI<ReminderConfigDto>> {
+    return this.putRequest<ReminderConfigDto>(
+      `${this.baseUrl}/private/admin/configs/reminders`,
       payload
     );
   }

@@ -2,7 +2,7 @@ import { BehaviorSubject, of, throwError, Subject } from 'rxjs';
 import { FormBuilder } from '@angular/forms';
 import { SellPageComponent } from './sell-page.component';
 import { WalkInTripDto, WalkInRouteGroupDto } from '../../../../services/staff/staff-api.service';
-import { createTranslateStub } from '../../../../testing/test-stubs';
+import { createRouterStub, createTranslateStub } from '../../../../testing/test-stubs';
 import { WalkInCheckoutPayload } from '../../components/walk-in-checkout/walk-in-checkout.component';
 
 function makeTrip(overrides: Partial<WalkInTripDto> = {}): WalkInTripDto {
@@ -37,6 +37,7 @@ function createStaffApiStub(overrides: Partial<{
   payWalkIn: ReturnType<typeof jasmine.createSpy>;
   getRouteSegments: ReturnType<typeof jasmine.createSpy>;
   getRouteStops: ReturnType<typeof jasmine.createSpy>;
+  getMe: ReturnType<typeof jasmine.createSpy>;
 }> = {}): any {
   return {
     getWalkInSchedules: jasmine.createSpy('getWalkInSchedules').and.returnValue(of({ data: [] })),
@@ -46,6 +47,10 @@ function createStaffApiStub(overrides: Partial<{
     payWalkIn: jasmine.createSpy('payWalkIn').and.returnValue(of({ data: {} })),
     getRouteSegments: jasmine.createSpy('getRouteSegments').and.returnValue(of({ data: { stopPairs: [] } })),
     getRouteStops: jasmine.createSpy('getRouteStops').and.returnValue(of({ data: { stops: [] } })),
+    // OBRS-193: default = no assigned sales point (salesPointStop: null), same as
+    // any account that hasn't been assigned one — origin-default behavior is
+    // unaffected for every pre-existing test that doesn't override this.
+    getMe: jasmine.createSpy('getMe').and.returnValue(of({ data: { salesPointStop: null } })),
     ...overrides,
   };
 }
@@ -92,6 +97,11 @@ function createAlertStub(): any {
     error: jasmine.createSpy('error').and.returnValue(Promise.resolve()),
     warning: jasmine.createSpy('warning').and.returnValue(Promise.resolve()),
     success: jasmine.createSpy('success').and.returnValue(Promise.resolve()),
+    // OBRS-195: the post-sale success prompt now offers a "Print ticket"
+    // choice via AlertService.confirm(); default to "not confirmed" (staff
+    // dismissed/closed) so existing tests that don't care about printing are
+    // unaffected — tests that DO care override this per-call.
+    confirm: jasmine.createSpy('confirm').and.returnValue(Promise.resolve(false)),
   };
 }
 
@@ -99,7 +109,8 @@ function makeComponent(
   staffApi = createStaffApiStub(),
   alertService = createAlertStub(),
   adminApi = createAdminApiStub(),
-  scheduleStore = createScheduleStoreStub()
+  scheduleStore = createScheduleStoreStub(),
+  router = createRouterStub()
 ): SellPageComponent {
   return new SellPageComponent(
     staffApi,
@@ -107,7 +118,8 @@ function makeComponent(
     createTranslateStub(),
     new FormBuilder(),
     adminApi,
-    scheduleStore
+    scheduleStore,
+    router
   );
 }
 
@@ -201,6 +213,13 @@ describe('SellPageComponent', () => {
       (comp as any).onDateChanged(new Date());
       expect((comp as any).seatPassengerTypes).toEqual({});
     });
+
+    it('resets activeTabIndex to 0 on date change (OBRS-130 checkout/center layout follow-up)', () => {
+      const comp = makeComponent();
+      (comp as any).activeTabIndex = 2;
+      (comp as any).onDateChanged(new Date());
+      expect((comp as any).activeTabIndex).toBe(0);
+    });
   });
 
   describe('onPassengerTypeChanged', () => {
@@ -254,6 +273,13 @@ describe('SellPageComponent', () => {
       (comp as any).seatPassengerTypes = { B1: 'male' };
       (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
       expect((comp as any).seatPassengerTypes).toEqual({});
+    });
+
+    it('resets activeTabIndex to 0 when a new trip is selected (the center panel\'s p-tabView remounts on tab 0)', () => {
+      const comp = makeComponent();
+      (comp as any).activeTabIndex = 1;
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      expect((comp as any).activeTabIndex).toBe(0);
     });
   });
 
@@ -399,6 +425,7 @@ describe('SellPageComponent', () => {
       const comp = makeComponent(api, alert);
       (comp as any).selectedTrip = makeTrip();
       (comp as any).selectedSeats = ['B1'];
+      (comp as any).activeTabIndex = 2;
       setSegmentFare(comp, 300);
       const loadTripsSpy = spyOn(comp as any, 'loadTrips');
 
@@ -411,9 +438,51 @@ describe('SellPageComponent', () => {
       expect((comp as any).selectedTrip).toBeNull();
       expect((comp as any).selectedSeats).toEqual([]);
       expect(loadTripsSpy).toHaveBeenCalled();
-      // Staff get an in-place success toast instead of being bounced from the
-      // customerArea /e-ticket route.
-      expect(alert.success).toHaveBeenCalled();
+      // OBRS-130 checkout/center layout follow-up: back to the Ticket Sales tab
+      // (index 0) so the checkout column reappears for the next sale.
+      expect((comp as any).activeTabIndex).toBe(0);
+      // OBRS-195: staff get an in-place success prompt (via AlertService.confirm,
+      // never a direct Swal.fire()) offering to print — not a bounce to the
+      // customerArea /e-ticket route (OBRS-188).
+      expect(alert.confirm).toHaveBeenCalled();
+    });
+
+    it('navigates to the staff receipt route (never /e-ticket) when staff confirms "Print ticket" (OBRS-195/OBRS-188)', async () => {
+      const api = createStaffApiStub();
+      const alert = createAlertStub();
+      alert.confirm.and.returnValue(Promise.resolve(true));
+      const router = createRouterStub();
+      const navigateSpy = spyOn(router, 'navigate').and.callThrough();
+      const comp = makeComponent(api, alert, createAdminApiStub(), createScheduleStoreStub(), router);
+      (comp as any).selectedTrip = makeTrip();
+      (comp as any).selectedSeats = ['B1'];
+      setSegmentFare(comp, 300);
+      spyOn(comp as any, 'loadTrips');
+
+      (comp as any).onSell(validPayload);
+      // Let the confirm() promise resolve before asserting the navigation.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(navigateSpy).toHaveBeenCalledWith(['/staff/sell/receipt', 99]);
+    });
+
+    it('does NOT navigate when staff dismisses the print prompt', async () => {
+      const api = createStaffApiStub();
+      const alert = createAlertStub(); // confirm() defaults to resolving false
+      const router = createRouterStub();
+      const navigateSpy = spyOn(router, 'navigate').and.callThrough();
+      const comp = makeComponent(api, alert, createAdminApiStub(), createScheduleStoreStub(), router);
+      (comp as any).selectedTrip = makeTrip();
+      (comp as any).selectedSeats = ['B1'];
+      setSegmentFare(comp, 300);
+      spyOn(comp as any, 'loadTrips');
+
+      (comp as any).onSell(validPayload);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(navigateSpy).not.toHaveBeenCalled();
     });
 
     it('includes identityCardNumber in passenger when provided', () => {
@@ -622,7 +691,8 @@ describe('SellPageComponent', () => {
         translate,
         new FormBuilder(),
         createAdminApiStub(),
-        createScheduleStoreStub()
+        createScheduleStoreStub(),
+        createRouterStub()
       );
       return { comp, translate };
     }
@@ -753,6 +823,121 @@ describe('SellPageComponent', () => {
     });
   });
 
+  // OBRS-193: salesperson sales-point default pickup. The pickup no longer
+  // always defaults to the route origin — it defaults to the salesperson's
+  // assigned salesPointStop (GET /users/me) when one is set AND it's on the
+  // current route; otherwise it falls back to the origin exactly as before.
+  describe('salesperson default pickup (OBRS-193)', () => {
+    function segPairsResponse() {
+      const pair = (from: string, to: string, fare: string) => ({
+        segmentId: 0,
+        fromStop: { slug: from, name: from.toUpperCase() },
+        toStop: { slug: to, name: to.toUpperCase() },
+        vehicleType: { slug: 'bus', name: 'Bus' },
+        fare,
+        estimatedDurationMinutes: 30,
+      });
+      return {
+        data: {
+          stopPairs: [
+            pair('stop_a', 'stop_b', '100'),
+            pair('stop_b', 'stop_c', '100'),
+            pair('stop_a', 'stop_c', '200'),
+          ],
+        },
+      };
+    }
+
+    function makeComponentWithSalesPoint(salesPointStop: string | null): {
+      comp: SellPageComponent;
+      api: any;
+      translate: any;
+    } {
+      const api = createStaffApiStub({
+        getRouteSegments: jasmine.createSpy('getRouteSegments').and.returnValue(of(segPairsResponse())),
+        getMe: jasmine.createSpy('getMe').and.returnValue(of({ data: { salesPointStop } })),
+      });
+      const translate = createTranslateStub();
+      const comp = new SellPageComponent(
+        api,
+        createAlertStub(),
+        translate,
+        new FormBuilder(),
+        createAdminApiStub(),
+        createScheduleStoreStub(),
+        createRouterStub()
+      );
+      return { comp, api, translate };
+    }
+
+    it('(a) defaults pickup to salesPointStop when it is present AND on the route', () => {
+      const { comp } = makeComponentWithSalesPoint('stop_b');
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      expect((comp as any).pickupSlug).toBe('stop_b');
+    });
+
+    it('(b) falls back to the route origin when salesPointStop is present but NOT on the route', () => {
+      const { comp } = makeComponentWithSalesPoint('ghost_stop');
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      expect((comp as any).pickupSlug).toBe('stop_a');
+    });
+
+    it('(c) defaults pickup to the route origin when salesPointStop is null — regression, unchanged behavior', () => {
+      const { comp } = makeComponentWithSalesPoint(null);
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      expect((comp as any).pickupSlug).toBe('stop_a');
+    });
+
+    it('(d) preserves a manual pickup override across a reload even though it differs from salesPointStop', () => {
+      const { comp, translate } = makeComponentWithSalesPoint('stop_b');
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      // Sales point would default pickup to stop_b; staff manually overrides to
+      // the origin instead.
+      (comp as any).pickupSlug = 'stop_a';
+      (comp as any).dropoffSlug = 'stop_b';
+      (translate.onLangChange as Subject<unknown>).next({ lang: 'th' });
+      // The existing preserve mechanism must still win — re-default must NOT
+      // silently reassert the sales-point stop over the manual choice.
+      expect((comp as any).pickupSlug).toBe('stop_a');
+      expect((comp as any).dropoffSlug).toBe('stop_b');
+    });
+
+    it('fetches /users/me only ONCE across ngOnInit + multiple trip selections (cached, not refetched)', () => {
+      const { comp, api } = makeComponentWithSalesPoint('stop_b');
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip({ scheduleId: 1 }), routeSlug: 'bkk-cm' });
+      (comp as any).onTripSelected({ trip: makeTrip({ scheduleId: 2 }), routeSlug: 'bkk-cm' });
+      expect(api.getMe).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not refetch /users/me on a language-switch reload', () => {
+      const { comp, api, translate } = makeComponentWithSalesPoint('stop_b');
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      (translate.onLangChange as Subject<unknown>).next({ lang: 'th' });
+      expect(api.getMe).toHaveBeenCalledTimes(1);
+    });
+
+    it('a /users/me error is treated as no sales point and does not block segment loading', () => {
+      const api = createStaffApiStub({
+        getRouteSegments: jasmine.createSpy('getRouteSegments').and.returnValue(of(segPairsResponse())),
+        getMe: jasmine.createSpy('getMe').and.returnValue(throwError(() => new Error('network error'))),
+      });
+      const comp = new SellPageComponent(
+        api, createAlertStub(), createTranslateStub(), new FormBuilder(),
+        createAdminApiStub(), createScheduleStoreStub(), createRouterStub()
+      );
+      comp.ngOnInit();
+      (comp as any).onTripSelected({ trip: makeTrip(), routeSlug: 'bkk-cm' });
+      expect((comp as any).isLoadingSegments).toBeFalse();
+      expect((comp as any).pickupSlug).toBe('stop_a');
+    });
+  });
+
   describe('schedule management — optimistic delete', () => {
     it('removes the deleted scheduleId from routeGroups immediately (optimistic)', () => {
       const comp = makeComponent();
@@ -796,12 +981,14 @@ describe('SellPageComponent', () => {
       (comp as any).selectedSeats = ['B1', 'B2'];
       (comp as any).seatPassengerTypes = { B1: 'male', B2: 'female' };
 
+      (comp as any).activeTabIndex = 1;
       (comp as any).onDeleteScheduleClicked({ trip: tripToDelete, routeSlug: 'r1' });
       void (comp as any).confirmDeleteSchedule();
 
       expect((comp as any).selectedTrip).toBeNull();
       expect((comp as any).selectedSeats).toEqual([]);
       expect((comp as any).seatPassengerTypes).toEqual({});
+      expect((comp as any).activeTabIndex).toBe(0);
     });
 
     it('does NOT clear selectedTrip when a different trip was deleted', () => {
@@ -821,6 +1008,65 @@ describe('SellPageComponent', () => {
 
       expect((comp as any).selectedTrip).toEqual(selectedTrip);
       expect((comp as any).selectedSeats).toEqual(['B1']);
+    });
+  });
+
+  // OBRS-283: smart delete/cancel branch driven by the trip's `deletable` +
+  // `confirmedBookingCount` fields (see shared/lib/schedule-delete-mode.ts).
+  describe('schedule management — OBRS-283 smart cancel branch', () => {
+    it('deletable===false + confirmedBookingCount>0 resolves the "cancel-refund" dialog mode', () => {
+      const comp = makeComponent();
+      const trip = makeTrip({ scheduleId: 10, deletable: false, confirmedBookingCount: 4 });
+      (comp as any).onDeleteScheduleClicked({ trip, routeSlug: 'r1' });
+      expect((comp as any).scheduleDeleteModalMode).toBe('cancel-refund');
+    });
+
+    it('deletable===false + confirmedBookingCount===0 resolves the "cancel-no-refund" dialog mode', () => {
+      const comp = makeComponent();
+      const trip = makeTrip({ scheduleId: 10, deletable: false, confirmedBookingCount: 0 });
+      (comp as any).onDeleteScheduleClicked({ trip, routeSlug: 'r1' });
+      expect((comp as any).scheduleDeleteModalMode).toBe('cancel-no-refund');
+    });
+
+    it('a trip missing `deletable` (undefined, the default from makeTrip()) falls through to "delete"', () => {
+      const comp = makeComponent();
+      const trip = makeTrip({ scheduleId: 10 });
+      (comp as any).onDeleteScheduleClicked({ trip, routeSlug: 'r1' });
+      expect((comp as any).scheduleDeleteModalMode).toBe('delete');
+    });
+
+    it('cancel-refund mode calls adminApiService.cancelSchedule() (not deleteSchedule()) and shows the success toast with the response affectedBookingCount', async () => {
+      const cancelSchedule = jasmine.createSpy('cancelSchedule').and.returnValue(
+        of({ data: { scheduleId: 10, status: 'cancelled', affectedBookingCount: 5 } })
+      );
+      const adminApi = { ...createAdminApiStub(), cancelSchedule };
+      const alert = createAlertStub();
+      const comp = makeComponent(createStaffApiStub(), alert, adminApi);
+
+      const trip = makeTrip({ scheduleId: 10, deletable: false, confirmedBookingCount: 5 });
+      (comp as any).routeGroups = [makeRouteGroup('r1', [trip])];
+      (comp as any).onDeleteScheduleClicked({ trip, routeSlug: 'r1' });
+
+      await (comp as any).confirmDeleteSchedule();
+
+      expect(cancelSchedule).toHaveBeenCalledWith(10);
+      expect(adminApi.deleteSchedule).not.toHaveBeenCalled();
+      expect(alert.success).toHaveBeenCalledWith('ADMIN.MESSAGES.SCHEDULE_CANCELLED');
+    });
+
+    it('deletable===true still calls adminApiService.deleteSchedule() (unchanged)', async () => {
+      const adminApi = createAdminApiStub();
+      const alert = createAlertStub();
+      const comp = makeComponent(createStaffApiStub(), alert, adminApi);
+
+      const trip = makeTrip({ scheduleId: 10, deletable: true });
+      (comp as any).routeGroups = [makeRouteGroup('r1', [trip])];
+      (comp as any).onDeleteScheduleClicked({ trip, routeSlug: 'r1' });
+
+      await (comp as any).confirmDeleteSchedule();
+
+      expect(adminApi.deleteSchedule).toHaveBeenCalledWith(10);
+      expect(alert.success).toHaveBeenCalledWith('ADMIN.MESSAGES.DELETED');
     });
   });
 
@@ -847,7 +1093,7 @@ describe('SellPageComponent', () => {
       const comp = new SellPageComponent(
         createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
-        createAdminApiStub(), store
+        createAdminApiStub(), store, createRouterStub()
       );
       comp.ngOnInit();
 
@@ -874,7 +1120,7 @@ describe('SellPageComponent', () => {
       const comp = new SellPageComponent(
         createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
-        createAdminApiStub(), store
+        createAdminApiStub(), store, createRouterStub()
       );
       comp.ngOnInit();
 
@@ -900,7 +1146,7 @@ describe('SellPageComponent', () => {
       const comp = new SellPageComponent(
         createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
-        createAdminApiStub(), store
+        createAdminApiStub(), store, createRouterStub()
       );
       comp.ngOnInit();
 
@@ -924,7 +1170,7 @@ describe('SellPageComponent', () => {
       const comp = new SellPageComponent(
         createStaffApiStub(),
         createAlertStub(), createTranslateStub(), new FormBuilder(),
-        createAdminApiStub(), store
+        createAdminApiStub(), store, createRouterStub()
       );
       comp.ngOnInit();
 

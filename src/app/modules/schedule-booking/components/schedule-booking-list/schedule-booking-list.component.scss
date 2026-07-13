@@ -78,6 +78,13 @@
           overflow: hidden;
           text-overflow: ellipsis;
         }
+
+        .trip-estimate {
+          font-size: $font-size-sm;
+          color: $text-lightblack;
+          text-align: center;
+          white-space: nowrap;
+        }
       }
     }
 
@@ -101,6 +108,12 @@
         color: $text-softblack;
       }
 
+      .price-unit {
+        font-size: $font-size-sm;
+        font-weight: $font-weight-regular;
+        color: $text-lightblack;
+      }
+
       .availability {
         font-size: $font-size-sm;
         font-weight: $font-weight-regular;
@@ -112,6 +125,13 @@
         column-gap: $space-2xs;
         flex-wrap: wrap;
         justify-content: flex-end;
+      }
+
+      .seat-status {
+        &--low {
+          color: $text-red;
+          font-weight: $font-weight-semibold;
+        }
       }
 
       .select-btn {
@@ -202,6 +222,11 @@
     max-width: 100%;
     text-align: left;
     overflow: visible;
+  }
+
+  .booking-container .schedule-item .left .time-info .trip-estimate {
+    white-space: normal;
+    text-align: left;
   }
 
   .booking-container .schedule-item .left .icon img {

@@ -1,5 +1,6 @@
 import { FormBuilder } from '@angular/forms';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
+import { BehaviorSubject, Subject, throwError } from 'rxjs';
 import { SchedulesPageComponent } from './schedules-page.component';
 import {
   AdminScheduleDto,
@@ -321,6 +322,128 @@ describe('SchedulesPageComponent confirmDelete — optimistic removal by kind br
   );
 });
 
+// OBRS-283: smart delete/cancel branch driven by the row's `deletable` +
+// `confirmedBookingCount` fields. Set rows (kind:'set') never carry these
+// fields and must always keep the unconditional hard-delete path.
+describe('SchedulesPageComponent confirmDelete — OBRS-283 smart cancel branch', () => {
+  function makeCancelComponent(apiSpies: Record<string, unknown>) {
+    const store = makeStoreStubWithMutate();
+    const alert = {
+      success: jasmine.createSpy('success').and.resolveTo(undefined),
+      error: jasmine.createSpy('error').and.resolveTo(undefined),
+    };
+    const component = new SchedulesPageComponent(
+      apiSpies as any,
+      new FormBuilder(),
+      alert as any,
+      createTranslateStub(),
+      store as any
+    );
+    return { component, store, alert };
+  }
+
+  it('deletable===false + confirmedBookingCount>0 resolves the "cancel-refund" dialog mode', () => {
+    const { component } = makeCancelComponent({});
+    (component as any).selectedSchedule = {
+      ...TRIP_ROW,
+      deletable: false,
+      confirmedBookingCount: 4,
+    };
+    expect((component as any).deleteModalMode).toBe('cancel-refund');
+  });
+
+  it('deletable===false + confirmedBookingCount===0 resolves the "cancel-no-refund" dialog mode', () => {
+    const { component } = makeCancelComponent({});
+    (component as any).selectedSchedule = {
+      ...TRIP_ROW,
+      deletable: false,
+      confirmedBookingCount: 0,
+    };
+    expect((component as any).deleteModalMode).toBe('cancel-no-refund');
+  });
+
+  it('deletable===true resolves "delete" (unchanged hard-delete path)', () => {
+    const { component } = makeCancelComponent({});
+    (component as any).selectedSchedule = { ...TRIP_ROW, deletable: true, confirmedBookingCount: 2 };
+    expect((component as any).deleteModalMode).toBe('delete');
+  });
+
+  it('a cached row missing `deletable` (undefined) falls through to "delete" (strict === false)', () => {
+    const { component } = makeCancelComponent({});
+    (component as any).selectedSchedule = { ...TRIP_ROW, deletable: undefined };
+    expect((component as any).deleteModalMode).toBe('delete');
+  });
+
+  it('a Schedule SET row (kind:"set") always resolves "delete" even if deletable/confirmedBookingCount were somehow present', () => {
+    const { component } = makeCancelComponent({});
+    (component as any).selectedSchedule = {
+      ...SET_ROW,
+      kind: 'set',
+      deletable: false,
+      confirmedBookingCount: 5,
+    };
+    expect((component as any).deleteModalMode).toBe('delete');
+  });
+
+  it('cancel-refund mode calls cancelSchedule() (not deleteSchedule()) and shows the success toast with the response affectedBookingCount', async () => {
+    const cancelSpy = jasmine.createSpy('cancelSchedule').and.returnValue(
+      new BehaviorSubject({
+        code: 200,
+        message: 'OK',
+        data: { scheduleId: 2, status: 'cancelled', affectedBookingCount: 5 },
+      })
+    );
+    const deleteSpy = jasmine.createSpy('deleteSchedule');
+    const { component, store, alert } = makeCancelComponent({
+      cancelSchedule: cancelSpy,
+      deleteSchedule: deleteSpy,
+    });
+
+    (component as any).selectedSchedule = {
+      ...TRIP_ROW,
+      id: 2,
+      kind: 'schedule',
+      deletable: false,
+      confirmedBookingCount: 5,
+    };
+    (component as any).isDeleteModalOpen = true;
+    store.refresh.and.resolveTo(undefined);
+
+    await (component as any).confirmDelete();
+
+    expect(cancelSpy).toHaveBeenCalledWith(2);
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(alert.success).toHaveBeenCalledWith('ADMIN.MESSAGES.SCHEDULE_CANCELLED');
+    expect((component as any).isDeleteModalOpen).toBeFalse();
+  });
+
+  it('a Trip row with deletable===true still calls deleteSchedule() (unchanged)', async () => {
+    const cancelSpy = jasmine.createSpy('cancelSchedule');
+    const deleteSpy = jasmine
+      .createSpy('deleteSchedule')
+      .and.returnValue(new BehaviorSubject({ code: 200, message: 'OK', data: null }));
+    const { component, store, alert } = makeCancelComponent({
+      cancelSchedule: cancelSpy,
+      deleteSchedule: deleteSpy,
+    });
+
+    (component as any).selectedSchedule = {
+      ...TRIP_ROW,
+      id: 2,
+      kind: 'schedule',
+      deletable: true,
+    };
+    (component as any).isDeleteModalOpen = true;
+    store.refresh.and.resolveTo(undefined);
+
+    await (component as any).confirmDelete();
+
+    expect(deleteSpy).toHaveBeenCalledWith(2);
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(alert.success).toHaveBeenCalledWith('ADMIN.MESSAGES.DELETED');
+  });
+});
+
 // design-system §3.1: a form select starts on its placeholder; the create modals must
 // NOT pre-seed vehicleType with the first option (the Figure 2 "Van by default" bug).
 // route still defaults (it's a sensible first-option default), proving the lock is
@@ -348,5 +471,101 @@ describe('SchedulesPageComponent create modals — vehicleType starts blank (des
     (component as any).openCreateScheduleModal();
     expect((component as any).scheduleItemForm.get('vehicleType')?.value).toBe('');
     expect((component as any).scheduleItemForm.get('route')?.value).toBe('bkk-cm');
+  });
+});
+
+// OBRS-209 AC10: a schedule create/update rejected with errorCode
+// VEHICLE_UNDER_MAINTENANCE surfaces as an inline field message under
+// vehicleId, never a second AlertService.error() toast.
+describe('SchedulesPageComponent submitSchedule — VEHICLE_UNDER_MAINTENANCE (OBRS-209 AC10)', () => {
+  function makeSubmitReady(adminApi: Record<string, unknown>) {
+    const alert = {
+      success: jasmine.createSpy('success').and.resolveTo(undefined),
+      error: jasmine.createSpy('error').and.resolveTo(undefined),
+    };
+    const component = new SchedulesPageComponent(
+      adminApi as any,
+      new FormBuilder(),
+      alert as any,
+      createTranslateStub(),
+      makeStoreStub() as any
+    );
+    (component as any).routeOptions = [{ code: 'bkk-cm', label: 'BKK-CM' }];
+    (component as any).vehicleTypeOptions = [{ code: 'van', label: 'Van' }];
+    component['openCreateScheduleModal']();
+    const form = (component as any).scheduleItemForm;
+    form.patchValue({
+      departureDate: new Date(2026, 6, 10),
+      departureTime: new Date(2026, 6, 10, 8, 0),
+      route: 'bkk-cm',
+      vehicleType: 'van',
+      vehicleId: '3',
+    });
+    return { component, alert };
+  }
+
+  it('sets the inline message and does NOT call AlertService.error (no double surface)', async () => {
+    const adminApi = {
+      createSchedule: jasmine.createSpy('createSchedule').and.returnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              status: 400,
+              error: { errorCode: 'VEHICLE_UNDER_MAINTENANCE', message: 'ignored localized message' },
+            })
+        )
+      ),
+    };
+    const { component, alert } = makeSubmitReady(adminApi);
+
+    await component['submitSchedule']();
+
+    expect((component as any).vehicleUnderMaintenanceMessage).toBe(
+      'ADMIN.SCHEDULES.VEHICLE_UNDER_MAINTENANCE'
+    );
+    expect(alert.error).not.toHaveBeenCalled();
+  });
+
+  it('any other errorCode keeps the existing generic AlertService.error() fallback', async () => {
+    const adminApi = {
+      createSchedule: jasmine.createSpy('createSchedule').and.returnValue(
+        throwError(
+          () => new HttpErrorResponse({ status: 400, error: { errorCode: 'SOME_OTHER_ERROR' } })
+        )
+      ),
+    };
+    const { component, alert } = makeSubmitReady(adminApi);
+
+    await component['submitSchedule']();
+
+    expect((component as any).vehicleUnderMaintenanceMessage).toBe('');
+    expect(alert.error).toHaveBeenCalled();
+  });
+
+  it('clears the inline message when the vehicle selection changes', () => {
+    const { component } = makeSubmitReady({});
+    (component as any).vehicleUnderMaintenanceMessage = 'stale message';
+
+    (component as any).scheduleItemForm.get('vehicleId')?.setValue('9');
+
+    expect((component as any).vehicleUnderMaintenanceMessage).toBe('');
+  });
+
+  it('clears the inline message when the departure date changes', () => {
+    const { component } = makeSubmitReady({});
+    (component as any).vehicleUnderMaintenanceMessage = 'stale message';
+
+    (component as any).scheduleItemForm.get('departureDate')?.setValue(new Date(2026, 6, 11));
+
+    expect((component as any).vehicleUnderMaintenanceMessage).toBe('');
+  });
+
+  it('clears the inline message on modal close', () => {
+    const { component } = makeSubmitReady({});
+    (component as any).vehicleUnderMaintenanceMessage = 'stale message';
+
+    component['closeScheduleFormModal'](true);
+
+    expect((component as any).vehicleUnderMaintenanceMessage).toBe('');
   });
 });

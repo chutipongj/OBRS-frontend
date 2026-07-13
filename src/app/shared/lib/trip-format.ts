@@ -1,11 +1,12 @@
 import dayjs from 'dayjs';
+import { RouteStop, TripEstimate } from '../interfaces/route-map.interface';
 
 /**
  * Pure presentation formatters for a trip/schedule row — departure time, journey
- * duration, vehicle-type label, and per-seat price. These were duplicated verbatim
- * across the schedule-booking, payment, review, passenger-info and e-ticket
- * components; this is their single home so a formatting fix lands in one place and
- * the logic is unit-testable without a component harness.
+ * duration, vehicle-type label, per-seat price, and seat-availability status. These
+ * were duplicated verbatim across the schedule-booking, payment, review,
+ * passenger-info and e-ticket components; this is their single home so a formatting
+ * fix lands in one place and the logic is unit-testable without a component harness.
  */
 
 /** Formats an ISO/date string to `HH:mm` (24h). Empty string for missing/invalid input. */
@@ -54,4 +55,59 @@ export function capitalizeVehicleType(type: string | null | undefined): string {
 export function parsePricePerSeat(value: string | number | null | undefined): number {
   const parsed = typeof value === 'string' ? parseFloat(value) : value ?? 0;
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Whether a schedule row's remaining-seat count should be surfaced as a
+ * scarcity warning: `1..threshold` seats (inclusive). `0`/missing seats is
+ * deliberately `false` (no warning) — the search endpoint
+ * (`ScheduleRepository.searchSchedulesWithAvailability`) already filters out
+ * any schedule without enough seats for the party, so a sold-out row never
+ * reaches this component; every row shown here is bookable. Above the
+ * threshold is also `false` — the exact count is only shown when scarce.
+ */
+export function isLowSeatCount(
+  availableSeats: number | null | undefined,
+  threshold: number
+): boolean {
+  return availableSeats != null && availableSeats > 0 && availableSeats <= threshold;
+}
+
+/**
+ * Structural subset of `RouteStop` carrying only the two offset-based fields
+ * `tripEstimateFromStops` reads. Lets other API shapes that carry the same
+ * two fields (e.g. `BookingTicketStop`) type-check without widening to the
+ * full `RouteStop` shape.
+ */
+export type TripStopOffsets = Pick<
+  RouteStop,
+  'distanceKmFromOrigin' | 'offsetMinutesFromOrigin'
+>;
+
+/**
+ * Authoritative pickup→dropoff distance/duration, derived from the two stops'
+ * offset-based fields on the seeded `route_stops` table (free — no Directions/
+ * Distance-Matrix call). Each figure is resolved independently: a missing
+ * value on either stop yields `null` for that figure rather than fabricating
+ * a `0`, so a caller never renders a misleading "≈ 0 km"/"0 min".
+ */
+export function tripEstimateFromStops(
+  pickup: TripStopOffsets | null | undefined,
+  dropoff: TripStopOffsets | null | undefined
+): TripEstimate {
+  const pickupDistance = pickup?.distanceKmFromOrigin;
+  const dropoffDistance = dropoff?.distanceKmFromOrigin;
+  const distanceKm =
+    pickupDistance != null && dropoffDistance != null
+      ? Math.round(Math.abs(dropoffDistance - pickupDistance))
+      : null;
+
+  const pickupOffset = pickup?.offsetMinutesFromOrigin;
+  const dropoffOffset = dropoff?.offsetMinutesFromOrigin;
+  const durationMinutes =
+    pickupOffset != null && dropoffOffset != null
+      ? Math.round(Math.abs(dropoffOffset - pickupOffset))
+      : null;
+
+  return { distanceKm, durationMinutes };
 }

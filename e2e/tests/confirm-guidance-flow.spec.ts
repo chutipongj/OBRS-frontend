@@ -127,7 +127,7 @@ test.describe('OBRS-73 – Non-blocking confirm guidance', () => {
       }
     });
 
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // Select only the pickup stop; do NOT select dropoff
@@ -180,7 +180,7 @@ test.describe('OBRS-73 – Non-blocking confirm guidance', () => {
     expect(newErrors).toHaveLength(0);
 
     // Must remain on /home
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
   });
 
   // ── AC3 ───────────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ test.describe('OBRS-73 – Non-blocking confirm guidance', () => {
   test('AC3: dropoff-only confirm → warning toast (non-blocking, no OK button), tab switches to Pickup immediately', async ({
     page,
   }) => {
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // Switch to dropoff tab and select only the dropoff; leave pickup unselected
@@ -216,7 +216,7 @@ test.describe('OBRS-73 – Non-blocking confirm guidance', () => {
     await pickupRow.click();
     await expect(pickupRow).toHaveClass(/stop-row--selected/);
 
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
   });
 
   // ── AC4 ───────────────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ test.describe('OBRS-73 – Non-blocking confirm guidance', () => {
   test('AC4: neither stop selected → both confirm buttons are disabled (UI prevents the "select both" code path)', async ({
     page,
   }) => {
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // On pickup tab with no stop selected — Confirm pickup button should be disabled
@@ -265,7 +265,7 @@ test.describe('OBRS-73 – Prefill and stay on /home', () => {
       }
     });
 
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // Select pickup
@@ -287,7 +287,7 @@ test.describe('OBRS-73 – Prefill and stay on /home', () => {
 
     // AC5: browser stays on /home — no navigation to /schedule-booking
     await page.waitForTimeout(600);
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
     expect(page.url()).not.toContain('schedule-booking');
 
     // AC5: hero search bar "Source" field is prefilled with the picked pickup station
@@ -321,7 +321,7 @@ test.describe('OBRS-73 – Prefill and stay on /home', () => {
   test('AC5b: confirm via "Confirm pickup" button (both selected) → same prefill-and-stay behavior', async ({
     page,
   }) => {
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // Select pickup
@@ -342,7 +342,7 @@ test.describe('OBRS-73 – Prefill and stay on /home', () => {
 
     // Should still prefill and stay — not navigate
     await page.waitForTimeout(600);
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
 
     const sourceDropdown = page.locator(
       '[id="dropdownObrsHOME.HOME_BOOKING.START_STATION"]'
@@ -360,7 +360,7 @@ test.describe('OBRS-73 – Prefill and stay on /home', () => {
   test('AC6: after prefill, hero bar Search button still navigates to /schedule-booking normally', async ({
     page,
   }) => {
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapLoaded(page);
 
     // Prefill via confirm flow (both stops)

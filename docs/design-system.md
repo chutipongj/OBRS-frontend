@@ -78,6 +78,21 @@ rather than inlining a hex.
 | `danger` | destructive / error | SCSS `$text-red: #cb393a`; admin runtime `--admin-danger-bg` / `--admin-danger-text` / `--admin-danger-border` |
 | `border` | hairlines, input borders | `$primary-grey` |
 
+### 2.4 Status/state color token inventory (the "status table")
+
+Every `.admin-status.is-*` role in the codebase, so a new status color can be
+checked for a collision against the **full** legend (§11 rubric), not just the
+token it's copied from:
+
+| Class | Tokens | Meaning | Notes |
+|---|---|---|---|
+| `.is-success` | `--admin-success-bg` / `--admin-success-text` | resolved / positive | name is historical — resolves to **blue**, not green (§13 debt). |
+| `.is-warning` | `--admin-warning-bg` / `--admin-warning-text` | needs attention | |
+| `.is-danger` | `--admin-danger-bg` / `--admin-danger-text` | rejected / error | also the §2.1 `danger` role's runtime binding. |
+| `.is-accepted` | `--admin-accepted-bg` / `--admin-accepted-text` | accepted (usability reports) | green. |
+| `.is-info` | `--admin-inreview-bg` / `--admin-inreview-text` | in-review | neutral **blue-grey**; light bg + dark text, no dark-mode override. |
+| `.is-neutral` | `--admin-neutral-bg` / `--admin-neutral-text` | inactive/unset state (e.g. boarding-list "Not boarded", OBRS-130) | plain **grey** (no blue cast) — distinct from `.is-info`'s blue-grey; light bg + dark text, no dark-mode override. |
+
 ### 2.3 Brand is per-shell (decision)
 
 The app has **three shell identities** and intentionally keeps them distinct —
@@ -149,7 +164,7 @@ One color = one meaning. Never pick a button color for looks.
 |---|---|---|
 | **Primary** | the one main action of a screen/modal (Confirm, Save, Sell) | the **brand** filled button (`admin-btn admin-btn-primary` on admin; the brand-green primary on staff) |
 | **Secondary** | cancel / back / dismiss | outlined or neutral (`admin-btn`, or `btn-outline-*`) |
-| **Destructive** | delete / irreversible | `danger` role (red `$text-red`) |
+| **Destructive** | delete / irreversible | `danger` role (red `$text-red`); on an admin/staff themed surface use **`.admin-btn.admin-btn-danger`** (OBRS-130) — composes the existing `--admin-danger-text`/`--admin-danger-border` tokens (no new hex), same shape as `.admin-btn`, just themed to read as destructive. Used for a row-level reversal action (e.g. boarding-list "Un-board") that isn't a full delete-confirm. |
 | **Link** | inline navigation, low emphasis | `btn btn-link p-0` |
 
 **Rules**
@@ -234,6 +249,23 @@ links to `/home` and no separate `a[href="/home"]` Home button exists.
 
 ## 10. Shared component conventions
 
+- **Print-only content: CDK Portal teleport-to-body, not a `visibility:hidden`
+  reveal rule (OBRS-100).** When a screen needs to print one element in
+  isolation from surrounding shell chrome, teleport a dedicated
+  `<ng-template>` to a `document.body` child via `DomPortalOutlet` +
+  `TemplatePortal` (`@angular/cdk/portal`), then gate visibility with a
+  marker class: `.the-marker-class { display:none; } @media print { body >
+  *:not(.the-marker-class) { display:none !important } .the-marker-class {
+  display:block !important } }`. This is immune to ancestor
+  `position`/`overflow`/`transform` (which breaks the classic
+  `visibility:hidden` + absolutely-positioned-reveal trick) and to
+  body-appended overlays (`p-menu[appendTo="body"]`, SweetAlert2's
+  `.swal2-container`) that a shell-scoped selector can't reach. Teardown must
+  be idempotent and bound to both `afterprint` **and** `ngOnDestroy` (a
+  leaked body node otherwise survives navigating away mid-print-dialog). See
+  `docs/adr/0015-boarding-manifest-print-isolation.md` (first usage,
+  `BoardingListComponent.printManifest()`) — reuse this pattern for the next
+  print feature rather than reinventing the reveal-rule idiom.
 - **Don't fork or mutate a shared component's contract** to add a per-surface need —
   extend it with an optional, null-default `@Input()` so existing call sites stay
   byte-identical. (`CORE.md`: seat components, walk-in reuse.)
@@ -295,6 +327,73 @@ allowed, but:
 This is how a recurring papercut stops recurring: it graduates from a hotfix to an
 enforced rule with a test behind it.
 
+**New pattern log:**
+
+- **Full-section empty state** (OBRS-209, `AppVehicleMaintenancePanelComponent`):
+  when a `200 + []` response's empty state deserves more than one muted `<tr>`,
+  render a centered icon/title/body block that **replaces the whole table
+  section** (not a zero-row table under a banner), styled only with
+  `var(--admin-muted)` / `var(--admin-text)` (see `vehicle-maintenance-panel.component.scss`).
+  Reuse this for the next list page that needs a richer empty state instead of
+  inventing a third variant.
+
+- **Right-aligned money columns** (OBRS-231, `EodSalesReportPageComponent`): a scoped
+  `.eod-report-money { text-align: right; font-variant-numeric: tabular-nums; }` class for
+  a table whose whole purpose is cash-drawer reconciliation, where columns of numbers need
+  to scan/sum visually — left-aligned text (the existing convention, e.g. Reports' Revenue
+  column) defeats that. No new color/token; apply only to genuinely money-shaped columns
+  (not counts like Bookings/Tickets). Reuse this class for the next reconciliation-style
+  table instead of inventing a second right-align convention.
+
+- **Bespoke static-token button on a dark-theme-exempt surface** (OBRS-269,
+  `.ticket-nav-btn` on the e-ticket card/page's "Navigate to pickup" button): the
+  e-ticket paper is intentionally exempt from dark theming (`dark-theme.scss` §15
+  paper look), so this button is styled with fixed `$primary-blue`/`$primary-white`
+  SCSS tokens — never the runtime `--accent*` vars — matching the sibling
+  `.ticket-leg-heading`/`.trip-estimate` static-token rules already on that surface.
+  Reuse this precedent for the next control added to the ticket paper instead of
+  reaching for a themed token that won't apply there.
+
+- **Expandable per-row detail** (OBRS-231, `EodSalesReportPageComponent`'s `byMethod`
+  breakdown): no accordion-row precedent existed in any admin table. Built from two
+  already-themed primitives, not a new control — `.admin-icon-btn` +
+  `.material-symbols-outlined` (`expand_more`/`expand_less`, the same chevron-button shape
+  as pagination controls) toggles a sibling `<tr>` with `[attr.colspan]` spanning every
+  column, containing a `flex-wrap` list of chips on `var(--admin-surface-soft)` (the same
+  "structural, not data" surface already used for `admin-table thead`). Collapsed by
+  default per row; expand state is page-local (not store state) and is cleared whenever
+  the underlying row array's identity changes (a new fetch), so it never survives a filter
+  change. Reuse this pattern for the next table that needs row-level drill-down instead of
+  introducing a modal or a second navigation level. **Reused as-is** for
+  `RefundVoidReportPageComponent`'s cancelled/expired breakdown (OBRS-98), keyed by
+  `row.date` instead of a synthetic salesperson id.
+
+- **Compact inline info-hint button** (OBRS-98, `RefundVoidReportPageComponent`'s
+  Refunded card): a KPI card needed a short definitional tooltip ("gross, before fees")
+  next to its muted label. The canonical `.admin-icon-btn` is 36px, sized for a table's
+  chevron toggle — too large inline next to a small label. Rather than a new control,
+  `.refund-void-info-btn` is a **size-only** override (22px, smaller icon glyph) of
+  `.admin-icon-btn`, keeping its color/hover tokens untouched; exposed via `[title]` +
+  `[attr.aria-label]` (no new tooltip component). Reuse this modifier for the next
+  KPI-card hint instead of introducing a tooltip directive.
+
+- **`.admin-kpi-icon.is-danger`** (OBRS-98, `RefundVoidReportPageComponent`'s Voided
+  card): completes the `is-success`/`is-warning` KPI-icon modifier set with the existing
+  `--admin-danger-bg`/`--admin-danger-text` tokens (§2.4) — no new color, added to
+  `admin-theme.scss` alongside its siblings rather than a page-local rule, so the next
+  KPI card needing a danger tone doesn't re-derive it.
+
+- **Mandatory notes rendered independent of `contentState`** (OBRS-98,
+  `RefundVoidReportPageComponent`'s basis/partition notes): every prior report page
+  (`ReportsPageComponent`, `EodSalesReportPageComponent`) gates its captions inside the
+  loading/empty/data-only sections, so they disappear in the invalid-range/error states
+  along with the table. This page's basis note ("bucketed by processed date, not booking
+  date") and partition note ("Voided = Cancelled + Expired") are regulatory/definitional,
+  not data-dependent, so they render **unconditionally** — no `*ngIf` on `contentState`
+  at all. Reuse this only for a note that stays true regardless of whether the current
+  fetch succeeded; a note that describes the *data* (like the basis captions above)
+  should stay gated with its section.
+
 ---
 
 ## 13. Consolidation debt (tracked, not yet enforced retroactively)
@@ -312,8 +411,13 @@ rewrite, but **do** resolve the relevant item whenever you touch a screen that h
       `var(--accent-strong)` / `var(--accent-soft)`, which cascade from `.admin-shell`
       (theme-staff = teal-green, theme-admin = orange) — theme-safe, no raw hex.
       **Still open:** non-admin `btn-primary` (Bootstrap blue) on staff/customer surfaces
-      (sell, staff-schedules, my-bookings, boarding-list) — a per-template class swap,
+      (sell, staff-schedules, my-bookings) — a per-template class swap,
       incremental "when you touch the file" work, not a sweep.
+      **boarding-list closed** (OBRS-130): the row-level Board/Un-board actions now use
+      `.admin-btn.admin-btn-small` / `.admin-btn.admin-btn-small.admin-btn-danger` instead
+      of raw `btn-primary`/`btn-outline-secondary` — themed, no raw hex. Deliberately
+      **not** `.admin-btn-primary`: a repeated per-row action isn't "the one main action
+      of the screen" (§4), so it stays a neutral/danger row action, not a promoted primary.
 - [x] **Admin danger hexes tokenized** (OBRS-122): `.admin-error` / `.admin-required`
       → `var(--admin-danger-text)`, `.admin-field.is-invalid` → new
       `--admin-danger-border` CSS var (both in `admin-theme.scss`) — the §2 `danger`
@@ -333,6 +437,11 @@ rewrite, but **do** resolve the relevant item whenever you touch a screen that h
       inputs.
 - [x] **§3.1 locking specs added** (sell-page cold-open + admin create modals). §7/§8
       locks: verify/​add when next touching those shells.
+- [x] **`.admin-status.is-neutral` + `.admin-btn-danger` added** (OBRS-130): a plain-grey
+      `--admin-neutral-*` pair (distinct from the blue-grey `--admin-inreview-*`) for an
+      "unset/inactive" state, and a danger-role button composed from the existing
+      `--admin-danger-text`/`--admin-danger-border` tokens — both runtime-themed, no new
+      hex. See §2.4 and §4.
 
 ---
 

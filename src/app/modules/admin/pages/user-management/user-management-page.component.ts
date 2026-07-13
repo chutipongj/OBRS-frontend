@@ -1,57 +1,38 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
-import { AbstractControl, FormBuilder, FormGroup, Validators } from '@angular/forms';
-import {
-  catchError,
-  debounceTime,
-  distinctUntilChanged,
-  firstValueFrom,
-  map,
-  of,
-  Subscription,
-  switchMap,
-} from 'rxjs';
+import { Subscription, firstValueFrom } from 'rxjs';
 import {
   AdminApiService,
   AdminLookupDto,
   AdminRoleDto,
-  AdminStatusDto,
-  AdminTranslationCollection,
   AdminUserDto,
-  CreateUserPayload,
-  UpdateUserPayload,
-  getAdminTranslationLabel,
-  parseAdminStatus,
 } from '../../../../services/admin/admin-api.service';
 import { AlertService } from '../../../../shared/services/alert.service';
 import { extractApiErrorMessage } from '../../../../shared/lib/api-error';
-import { formatDisplayDateTime } from '../../../../shared/lib/display-date-time';
 import { TranslateService } from '@ngx-translate/core';
 import { UsersStore } from './users.store';
 import { AuthService } from '../../../../auth/auth.service';
+import {
+  RoleOption,
+  StatusOption,
+  UserRow,
+  filterUsers,
+  toRoleOptions,
+  toStatusOptions,
+  toUserRow,
+} from './user-management.mappers';
 
-interface UserRow {
-  id: number;
-  fullName: string;
-  email: string;
-  phone: string;
-  roleSlugs: string[];
-  roles: string[];
-  status: string;
-  statusCode: string;
-  lastUpdated: string;
-  locked: boolean;
-}
-
-interface RoleOption {
-  slug: string;
-  label: string;
-}
-
-interface StatusOption {
-  code: string;
-  label: string;
-}
-
+/**
+ * User management list + CRUD + lock/unlock (OBRS-133 / OBRS-182 / #57).
+ *
+ * OBRS-257 (Phase 2 split, mirroring promotions OBRS-251 and routes
+ * OBRS-212/213): thinned down to an orchestrator. The list table, the
+ * create/edit form modal (credential enable/disable + duplicate-check owned
+ * there), the delete-confirm modal, and the unlock-confirm modal are now
+ * child components (UserListTableComponent / UserFormModalComponent /
+ * UserDeleteModalComponent / UserUnlockModalComponent) — this page owns only
+ * the store subscriptions, localization, filters, and the modal open/close +
+ * delete/unlock orchestration state.
+ */
 @Component({
   selector: 'app-user-management-page',
   templateUrl: './user-management-page.component.html',
@@ -75,55 +56,31 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
   protected isFormModalOpen = false;
   protected isDeleteModalOpen = false;
   protected isUnlockModalOpen = false;
-  protected isSubmitting = false;
   protected isDeleting = false;
   protected isUnlocking = false;
-  protected isEditMode = false;
-  protected isEditDetailLoading = false;
+  protected mode: 'create' | 'edit' = 'create';
   protected selectedUser: UserRow | null = null;
-  protected emailIsExist = false;
-  protected phoneNumberIsExist = false;
 
-  protected readonly userForm: FormGroup;
-  private emailCheckSubscription?: Subscription;
-  private phoneNumberCheckSubscription?: Subscription;
+  // Bound reloader passed to the form modal so it can refresh the list after
+  // it closes and shows its own success alert (arrow closes over `this`,
+  // mirroring PromotionsPageComponent.reloadStructureBound). Called LAST in
+  // the child's submitUser, after close + alert — same order as the
+  // pre-split store.refresh() call.
+  protected readonly reloadStructureBound = () => this.store.refresh();
+
   private readonly subscriptions = new Subscription();
 
   private rawUsers: AdminUserDto[] = [];
   private rawRoles: AdminRoleDto[] = [];
   private rawLookups: AdminLookupDto[] = [];
-  private readonly passwordValidators = [
-    Validators.required,
-    Validators.minLength(8),
-    Validators.maxLength(255),
-  ];
 
   constructor(
     private readonly adminApiService: AdminApiService,
-    private readonly formBuilder: FormBuilder,
     private readonly alertService: AlertService,
     private readonly translate: TranslateService,
     private readonly store: UsersStore,
     private readonly authService: AuthService
   ) {
-    this.userForm = this.formBuilder.group({
-      title: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(50)]],
-      firstName: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(50)]],
-      middleName: ['', [Validators.minLength(2), Validators.maxLength(50)]],
-      lastName: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(50)]],
-      email: ['', [Validators.required, Validators.email]],
-      phoneNumber: ['', [Validators.required, Validators.pattern(/^\d{10,15}$/)]],
-      password: ['', this.passwordValidators],
-      confirmPassword: ['', [Validators.required]],
-      preferredLocale: [
-        'th',
-        [Validators.required, Validators.pattern(/^[a-z]{2}(-[A-Z]{2})?$/)],
-      ],
-      status: ['', [Validators.required]],
-      roles: [[], [this.roleRequiredValidator]],
-      isPhoneNumberVerify: [true, [Validators.required]],
-    });
-
     // Language change only swaps displayed translations; data is already loaded,
     // so re-derive the view locally instead of re-fetching from the backend.
     this.subscriptions.add(
@@ -134,7 +91,6 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    this.setupDuplicateCheckSubscriptions();
     // Render the cached users instantly on re-entry, then revalidate.
     this.subscriptions.add(
       this.store.data$.subscribe((data) => {
@@ -165,8 +121,6 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.subscriptions.unsubscribe();
-    this.emailCheckSubscription?.unsubscribe();
-    this.phoneNumberCheckSubscription?.unsubscribe();
   }
 
   /** Skeletons only while loading with no cached data yet. */
@@ -176,20 +130,6 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
 
   protected get activeUsers(): number {
     return this.users.filter((user) => user.statusCode === 'active').length;
-  }
-
-  protected statusClass(status: string): string {
-    const normalizedStatus = status.toUpperCase();
-
-    if (normalizedStatus === 'ACTIVE') {
-      return 'is-success';
-    }
-
-    if (normalizedStatus.includes('PENDING')) {
-      return 'is-warning';
-    }
-
-    return 'is-danger';
   }
 
   protected onRoleFilterChange(value: string): void {
@@ -208,114 +148,20 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
   }
 
   protected openCreateModal(): void {
-    this.isEditMode = false;
+    this.mode = 'create';
     this.selectedUser = null;
-    this.resetDuplicateFlags();
-    this.userForm.reset({
-      title: '',
-      firstName: '',
-      middleName: '',
-      lastName: '',
-      email: '',
-      phoneNumber: '',
-      password: '',
-      confirmPassword: '',
-      preferredLocale: 'th',
-      status: this.statusOptions[0]?.code ?? 'active',
-      roles: [],
-      isPhoneNumberVerify: true,
-    });
-    this.setCredentialFieldsForCreateMode();
     this.isFormModalOpen = true;
   }
 
-  protected async openEditModal(user: UserRow): Promise<void> {
-    // Open the modal immediately with the row data we already hold, so it
-    // appears without waiting on the (slow on SIT) detail fetch. The server
-    // detail is patched in once it arrives — see the fetch below.
-    this.isEditMode = true;
+  protected openEditModal(user: UserRow): void {
+    this.mode = 'edit';
     this.selectedUser = user;
-    this.isEditDetailLoading = true;
-    this.resetDuplicateFlags();
-    this.applyUserFormValues(this.toUserDtoFallback(user), user);
-    this.setCredentialFieldsForEditMode();
     this.isFormModalOpen = true;
-
-    try {
-      const response = await firstValueFrom(this.adminApiService.getUserById(user.id));
-      const userDetail = response?.data ?? null;
-      // Ignore a stale response if the user closed the modal or switched rows.
-      if (userDetail && this.isFormModalOpen && this.selectedUser?.id === user.id) {
-        this.applyUserFormValues(userDetail, user, true);
-      }
-    } catch {
-      // Keep the fallback values already shown in the open modal.
-    } finally {
-      if (this.isFormModalOpen && this.selectedUser?.id === user.id) {
-        this.isEditDetailLoading = false;
-      }
-    }
   }
 
-  // Populate the user form from a DTO. When `onlyPristine` is set (the late
-  // detail patch), only controls the user hasn't started editing are filled,
-  // so the arriving server data never clobbers in-progress input.
-  private applyUserFormValues(
-    userDetail: AdminUserDto,
-    user: UserRow,
-    onlyPristine = false
-  ): void {
-    const parsedName = this.parseNameFromFullName(userDetail.fullName ?? user.fullName);
-    const roles = this.extractRoleSlugs(userDetail.roles);
-    const status = this.parseStatus(userDetail.status ?? user.statusCode);
-
-    const values: Record<string, unknown> = {
-      title: String((userDetail.title ?? parsedName.title) || 'Mr').trim(),
-      firstName: String(userDetail.firstName ?? parsedName.firstName ?? '').trim(),
-      middleName: String(userDetail.middleName ?? parsedName.middleName ?? '').trim(),
-      lastName: String(userDetail.lastName ?? parsedName.lastName ?? '').trim(),
-      email: userDetail.email ?? user.email,
-      phoneNumber: String(userDetail.phoneNumber ?? user.phone).replace(/\D/g, ''),
-      preferredLocale: userDetail.preferredLocale ?? 'th',
-      status: status.code,
-      roles: roles.length > 0 ? roles : [...user.roleSlugs],
-      isPhoneNumberVerify: true,
-    };
-
-    if (!onlyPristine) {
-      this.userForm.reset(values);
-      return;
-    }
-
-    for (const [name, value] of Object.entries(values)) {
-      const control = this.userForm.get(name);
-      if (control?.pristine) {
-        control.setValue(value);
-      }
-    }
-  }
-
-  private toUserDtoFallback(user: UserRow): AdminUserDto {
-    return {
-      id: user.id,
-      fullName: user.fullName,
-      email: user.email,
-      phoneNumber: user.phone,
-      status: user.statusCode,
-      roles: [...user.roleSlugs],
-    };
-  }
-
-  protected closeFormModal(force = false): void {
-    if (this.isSubmitting && !force) {
-      return;
-    }
-
+  protected onFormModalClosed(): void {
     this.isFormModalOpen = false;
-    this.isEditDetailLoading = false;
     this.selectedUser = null;
-    this.userForm.reset();
-    this.resetDuplicateFlags();
   }
 
   protected openDeleteModal(user: UserRow): void {
@@ -381,81 +227,6 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
     }
   }
 
-  protected isFieldInvalid(fieldName: string): boolean {
-    const field = this.userForm.get(fieldName);
-    return !!field && field.invalid && (field.dirty || field.touched);
-  }
-
-  protected isRoleChecked(slug: string): boolean {
-    const selectedRoles: string[] = this.userForm.value['roles'] ?? [];
-    return selectedRoles.includes(slug);
-  }
-
-  protected toggleRoleSelection(roleSlug: string, checked: boolean): void {
-    const currentRoles = [...(this.userForm.value['roles'] ?? [])];
-
-    if (checked && !currentRoles.includes(roleSlug)) {
-      currentRoles.push(roleSlug);
-    }
-
-    if (!checked) {
-      const index = currentRoles.indexOf(roleSlug);
-      if (index > -1) {
-        currentRoles.splice(index, 1);
-      }
-    }
-
-    this.userForm.patchValue({ roles: currentRoles });
-    this.userForm.get('roles')?.markAsTouched();
-  }
-
-  protected async submitUser(): Promise<void> {
-    if (this.userForm.invalid) {
-      this.userForm.markAllAsTouched();
-      return;
-    }
-
-    if (!this.isEditMode) {
-      const hasCredentialError =
-        !this.checkSamePassword() ||
-        this.emailIsExist ||
-        this.phoneNumberIsExist;
-
-      if (hasCredentialError) {
-        this.userForm.markAllAsTouched();
-        return;
-      }
-    }
-
-    this.isSubmitting = true;
-    try {
-      if (this.isEditMode && this.selectedUser) {
-        const payload = this.toUpdateUserPayload();
-        await firstValueFrom(this.adminApiService.updateUser(this.selectedUser.id, payload));
-        this.isSubmitting = false;
-        this.closeFormModal(true);
-        await this.alertService.success(this.translate.instant('ADMIN.MESSAGES.UPDATED'));
-      } else {
-        const payload = this.toCreateUserPayload();
-        await firstValueFrom(this.adminApiService.createUser(payload));
-        this.isSubmitting = false;
-        this.closeFormModal(true);
-        await this.alertService.success(this.translate.instant('ADMIN.MESSAGES.CREATED'));
-      }
-
-      await this.store.refresh();
-    } catch (error) {
-      this.isSubmitting = false;
-      this.closeFormModal(true);
-      const message =
-        extractApiErrorMessage(error) ||
-        this.translate.instant('ADMIN.MESSAGES.SAVE_FAILED');
-      await this.alertService.error(message);
-    } finally {
-      this.isSubmitting = false;
-    }
-  }
-
   protected async confirmDelete(): Promise<void> {
     if (!this.selectedUser) {
       return;
@@ -470,7 +241,8 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
       // without waiting for the background re-fetch to land (~2s on SIT).
       this.store.mutate((d) => ({ ...d, users: d.users.filter((u) => u.id !== id) }));
       this.closeDeleteModal(true);
-      // Overlap the table revalidate with the success dialog (see submitUser).
+      // Overlap the table revalidate with the success dialog (see the form
+      // modal's submitUser).
       const refresh = this.store.refresh();
       await this.alertService.success(this.translate.instant('ADMIN.MESSAGES.DELETED'));
       await refresh;
@@ -490,261 +262,26 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
   private applyLocalization(): void {
     const currentLocale = this.getCurrentLocale();
 
-    this.roleOptions = this.rawRoles.map((role) => ({
-      slug: role.slug,
-      label:
-        role.name ??
-        this.getTranslationLabel(role.translations, currentLocale) ??
-        this.getTranslationLabel(role.translations, 'en') ??
-        role.slug,
-    }));
-
-    this.statusOptions = this.rawLookups
-      .filter((lookup) => lookup.category === 'user_status')
-      .map((lookup) => ({
-        code: lookup.slug,
-        label:
-          this.getTranslationLabel(lookup.translations, currentLocale) ??
-          this.getTranslationLabel(lookup.translations, 'en') ??
-          lookup.slug,
-      }));
-
-    this.users = this.rawUsers.map((user) => this.toUserRow(user));
+    this.roleOptions = toRoleOptions(this.rawRoles, currentLocale);
+    this.statusOptions = toStatusOptions(this.rawLookups, currentLocale);
+    this.users = this.rawUsers.map((user) =>
+      toUserRow(user, currentLocale, this.translate.currentLang)
+    );
     this.syncFiltersWithAvailableOptions();
     this.applyFilters();
   }
 
-  private toCreateUserPayload(): CreateUserPayload {
-    const raw = this.userForm.getRawValue();
-
-    return {
-      title: String(raw.title ?? '').trim(),
-      firstName: String(raw.firstName ?? '').trim(),
-      middleName: String(raw.middleName ?? '').trim() || undefined,
-      lastName: String(raw.lastName ?? '').trim(),
-      email: String(raw.email ?? '').trim(),
-      phoneNumber: String(raw.phoneNumber ?? '').trim(),
-      password: String(raw.password ?? '').trim(),
-      preferredLocale: String(raw.preferredLocale ?? 'th').trim(),
-      status: String(raw.status ?? '').trim().toLowerCase(),
-      roles: [...(raw.roles ?? [])],
-      // Backend requires PDPA consent on user creation (UserReqDto extends SignUpReqDto).
-      // Admin-created accounts record consent on behalf of the operator.
-      pdpaConsent: true,
-    };
-  }
-
-  private toUpdateUserPayload(): UpdateUserPayload {
-    const raw = this.userForm.getRawValue();
-
-    return {
-      title: String(raw.title ?? '').trim(),
-      firstName: String(raw.firstName ?? '').trim(),
-      middleName: String(raw.middleName ?? '').trim() || undefined,
-      lastName: String(raw.lastName ?? '').trim(),
-      email: String(raw.email ?? '').trim(),
-      phoneNumber: String(raw.phoneNumber ?? '').trim(),
-      isPhoneNumberVerify: Boolean(raw.isPhoneNumberVerify),
-      preferredLocale: String(raw.preferredLocale ?? 'th').trim(),
-      status: String(raw.status ?? '').trim().toLowerCase(),
-      roles: [...(raw.roles ?? [])],
-    };
-  }
-
-  private toUserRow(user: AdminUserDto): UserRow {
-    const roleSlugs = this.extractRoleSlugs(user.roles);
-    const roleLabels = this.extractRoleLabels(user.roles);
-    const status = this.parseStatus(user.status);
-
-    return {
-      id: user.id,
-      fullName: user.fullName ?? '-',
-      email: user.email ?? '-',
-      phone: user.phoneNumber ?? '-',
-      roleSlugs,
-      roles: roleLabels.length > 0 ? roleLabels : ['-'],
-      status: status.name,
-      statusCode: status.code,
-      // The user record's last-modified time (updatedAt, falling back to createdAt).
-      // NOT a real login/activity time — labeled "อัปเดตล่าสุด" accordingly; a true
-      // last_login_at is tracked as a backlog item (OBRS-182).
-      lastUpdated: formatDisplayDateTime(user.updatedAt ?? user.createdAt, this.translate.currentLang),
-      locked: user.locked ?? false,
-    };
-  }
-
-  private extractRoleSlugs(roles: Array<string | AdminRoleDto> | null | undefined): string[] {
-    if (!roles || roles.length === 0) {
-      return [];
-    }
-
-    return roles
-      .map((role) => {
-        if (typeof role === 'string') {
-          return role;
-        }
-
-        return role.slug ?? '';
-      })
-      .map((slug) => slug.trim())
-      .filter((slug) => slug.length > 0);
-  }
-
-  private extractRoleLabels(roles: Array<string | AdminRoleDto> | null | undefined): string[] {
-    if (!roles || roles.length === 0) {
-      return [];
-    }
-
-    const currentLocale = this.getCurrentLocale();
-
-    return roles
-      .map((role) => {
-        if (typeof role === 'string') {
-          return role;
-        }
-
-        return (
-          role.name ??
-          this.getTranslationLabel(role.translations, currentLocale) ??
-          this.getTranslationLabel(role.translations, 'en') ??
-          role.slug
-        );
-      })
-      .map((label) => String(label ?? '').trim())
-      .filter((label) => label.length > 0);
-  }
-
+  // NOTE: `||` short-circuit is deliberate — translate.getDefaultLang() must
+  // only be called when currentLang is falsy (some TranslateService stubs
+  // don't implement it). Kept un-extracted for the same reason
+  // RoleManagementPageComponent / PromotionsPageComponent keep their
+  // getCurrentLocale private rather than moving it to the mappers file.
   private getCurrentLocale(): string {
     const rawLocale = String(
       this.translate.currentLang || this.translate.getDefaultLang() || 'th'
     ).toLowerCase();
 
     return rawLocale.startsWith('en') ? 'en' : 'th';
-  }
-
-  private parseStatus(value: string | AdminStatusDto | null | undefined): {
-    code: string;
-    name: string;
-  } {
-    return parseAdminStatus(value, this.getCurrentLocale());
-  }
-
-  private parseNameFromFullName(fullName: string | null | undefined): {
-    title: string;
-    firstName: string;
-    middleName: string;
-    lastName: string;
-  } {
-    const parts = String(fullName ?? '')
-      .trim()
-      .split(/\s+/)
-      .filter((part) => part.length > 0);
-
-    if (parts.length === 0) {
-      return { title: '', firstName: '', middleName: '', lastName: '' };
-    }
-
-    const titleTokens = new Set(['mr', 'mr.', 'mrs', 'mrs.', 'ms', 'ms.', 'miss', 'dr', 'dr.']);
-    let title = '';
-    if (titleTokens.has(parts[0].toLowerCase())) {
-      title = parts.shift() ?? '';
-    }
-
-    const firstName = parts.shift() ?? '';
-    if (parts.length === 0) {
-      return { title, firstName, middleName: '', lastName: '' };
-    }
-
-    const lastName = parts.pop() ?? '';
-    const middleName = parts.join(' ');
-    return { title, firstName, middleName, lastName };
-  }
-
-  private getTranslationLabel(
-    translations: AdminTranslationCollection | null | undefined,
-    locale?: string
-  ): string | null {
-    return getAdminTranslationLabel(translations, locale);
-  }
-
-  private roleRequiredValidator(control: AbstractControl): { required: true } | null {
-    const value = control.value;
-    if (Array.isArray(value) && value.length > 0) {
-      return null;
-    }
-
-    return { required: true };
-  }
-
-  private setCredentialFieldsForCreateMode(): void {
-    const passwordControl = this.userForm.get('password');
-    const confirmPasswordControl = this.userForm.get('confirmPassword');
-
-    passwordControl?.setValidators(this.passwordValidators);
-    confirmPasswordControl?.setValidators([Validators.required]);
-
-    passwordControl?.enable();
-    confirmPasswordControl?.enable();
-
-    passwordControl?.updateValueAndValidity();
-    confirmPasswordControl?.updateValueAndValidity();
-  }
-
-  private setCredentialFieldsForEditMode(): void {
-    const passwordControl = this.userForm.get('password');
-    const confirmPasswordControl = this.userForm.get('confirmPassword');
-
-    passwordControl?.clearValidators();
-    confirmPasswordControl?.clearValidators();
-
-    passwordControl?.disable();
-    confirmPasswordControl?.disable();
-
-    passwordControl?.updateValueAndValidity();
-    confirmPasswordControl?.updateValueAndValidity();
-  }
-
-  protected checkSamePassword(): boolean {
-    if (this.isEditMode) {
-      return true;
-    }
-
-    const raw = this.userForm.getRawValue();
-    const password = String(raw.password ?? '');
-    const confirmPassword = String(raw.confirmPassword ?? '');
-
-    return password.length > 0 && confirmPassword.length > 0 && password === confirmPassword;
-  }
-
-  protected shouldShowCredentialValidationError(controlName: 'email' | 'phoneNumber'): boolean {
-    if (this.isEditMode) {
-      return false;
-    }
-
-    const control = this.userForm.get(controlName);
-    if (!control || !control.value || (!control.touched && !control.dirty)) {
-      return false;
-    }
-
-    if (controlName === 'email') {
-      return this.emailIsExist;
-    }
-
-    return this.phoneNumberIsExist;
-  }
-
-  protected shouldShowConfirmPasswordMismatch(): boolean {
-    if (this.isEditMode || this.checkSamePassword()) {
-      return false;
-    }
-
-    const confirmPasswordControl = this.userForm.get('confirmPassword');
-    const passwordControl = this.userForm.get('password');
-
-    return Boolean(
-      (confirmPasswordControl?.touched || confirmPasswordControl?.dirty) ||
-      (passwordControl?.touched || passwordControl?.dirty)
-    );
   }
 
   private syncFiltersWithAvailableOptions(): void {
@@ -768,98 +305,11 @@ export class UserManagementPageComponent implements OnInit, OnDestroy {
   }
 
   private applyFilters(): void {
-    const roleFilter = this.selectedRoleFilter;
-    const statusFilter = this.selectedStatusFilter;
-    const keyword = this.searchKeyword.trim().toLowerCase();
-
-    this.filteredUsers = this.users.filter((user) => {
-      const matchRole =
-        roleFilter.length === 0 ||
-        user.roleSlugs.some((role) => role.trim().toLowerCase() === roleFilter);
-      if (!matchRole) {
-        return false;
-      }
-
-      const matchStatus =
-        statusFilter.length === 0 ||
-        user.statusCode.trim().toLowerCase() === statusFilter;
-      if (!matchStatus) {
-        return false;
-      }
-
-      if (keyword.length === 0) {
-        return true;
-      }
-
-      const searchTarget = [
-        user.fullName,
-        user.email,
-        user.phone,
-        user.roles.join(' '),
-        user.status,
-      ]
-        .join(' ')
-        .toLowerCase();
-
-      return searchTarget.includes(keyword);
-    });
-  }
-
-  private resetDuplicateFlags(): void {
-    this.emailIsExist = false;
-    this.phoneNumberIsExist = false;
-  }
-
-  private setupDuplicateCheckSubscriptions(): void {
-    const emailControl = this.userForm.get('email');
-    const phoneNumberControl = this.userForm.get('phoneNumber');
-
-    this.emailCheckSubscription = emailControl?.valueChanges
-      .pipe(
-        debounceTime(500),
-        distinctUntilChanged(),
-        switchMap((value) => this.checkDuplicateEmail(value))
-      )
-      .subscribe((isExist) => {
-        this.emailIsExist = isExist;
-      });
-
-    this.phoneNumberCheckSubscription = phoneNumberControl?.valueChanges
-      .pipe(
-        debounceTime(500),
-        distinctUntilChanged(),
-        switchMap((value) => this.checkDuplicatePhoneNumber(value))
-      )
-      .subscribe((isExist) => {
-        this.phoneNumberIsExist = isExist;
-      });
-  }
-
-  private checkDuplicateEmail(value: unknown) {
-    const email = String(value ?? '').trim();
-    if (!this.isCreateModeActive() || email.length === 0 || this.userForm.get('email')?.invalid) {
-      return of(false);
-    }
-
-    return this.adminApiService.checkUserExistsByEmail(email).pipe(
-      map((response) => Boolean(response?.data)),
-      catchError(() => of(false))
+    this.filteredUsers = filterUsers(
+      this.users,
+      this.selectedRoleFilter,
+      this.selectedStatusFilter,
+      this.searchKeyword
     );
-  }
-
-  private checkDuplicatePhoneNumber(value: unknown) {
-    const phoneNumber = String(value ?? '').trim();
-    if (!this.isCreateModeActive() || phoneNumber.length === 0 || this.userForm.get('phoneNumber')?.invalid) {
-      return of(false);
-    }
-
-    return this.adminApiService.checkUserExistsByPhoneNumber(phoneNumber).pipe(
-      map((response) => Boolean(response?.data)),
-      catchError(() => of(false))
-    );
-  }
-
-  private isCreateModeActive(): boolean {
-    return this.isFormModalOpen && !this.isEditMode;
   }
 }

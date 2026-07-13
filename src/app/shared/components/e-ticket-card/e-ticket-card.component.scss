@@ -100,6 +100,25 @@
   gap: $space-xs 16px;
 }
 
+// Scoped to the shared booking-ref/ticket-no grid only — preserves today's row
+// cadence now that travel date/time moved into the per-leg block below it.
+.ticket-summary-grid {
+  margin-bottom: $space-xs;
+}
+
+.ticket-leg {
+  display: flex;
+  flex-direction: column;
+  gap: $space-xs;
+}
+
+.ticket-leg-heading {
+  font-size: $font-size-xs;
+  font-weight: $font-weight-semibold;
+  color: $text-lightblack; // static token: the ticket card is intentionally exempt from dark theming (dark-theme.scss §15 paper look) — matches sibling captions, do NOT use a runtime --accent* var
+  margin-bottom: $space-2xs;
+}
+
 .ticket-item {
   display: flex;
   flex-direction: column;
@@ -136,6 +155,40 @@
   display: flex;
   flex-direction: column;
   gap: $space-xs;
+}
+
+.trip-estimate {
+  display: block;
+  font-size: 11px;
+  color: $text-lightblack; // static token: the ticket card is intentionally exempt from dark theming (dark-theme.scss §15 paper look) — matches sibling captions, do NOT use a runtime --accent* var
+}
+
+// OBRS-269: per-leg "Navigate to pickup" button. Static tokens only ($primary-blue /
+// $primary-white) — the ticket card is intentionally exempt from dark theming
+// (dark-theme.scss §15 paper look), same as .ticket-leg-heading/.trip-estimate above —
+// do NOT use a runtime --accent* var. Excluded from the downloaded PNG via
+// `ignoreElements` in downloadTicketImage() (same treatment as .download-btn).
+.ticket-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-3xs;
+  padding: 6px 12px;
+  border-radius: $radius-xl;
+  background: $primary-blue;
+  color: $primary-white;
+  font-size: 12px;
+  font-weight: $font-weight-semibold;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease-in-out;
+
+  .material-symbols-outlined {
+    font-size: 16px;
+  }
+
+  &:hover {
+    opacity: 0.9;
+  }
 }
 
 .ticket-passengers {

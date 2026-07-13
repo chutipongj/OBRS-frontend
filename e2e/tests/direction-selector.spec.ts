@@ -558,7 +558,7 @@ test.describe('AC9: Regression — existing pickup/dropoff confirm path', () => 
       route.fulfill({ json: confirmPayload })
     );
 
-    await page.goto('/home');
+    await page.goto('/');
     await waitForRouteMapReady(page);
 
     // Confirm we are on Chonburi→Bangkok (default direction, unchanged)
@@ -584,7 +584,7 @@ test.describe('AC9: Regression — existing pickup/dropoff confirm path', () => 
 
     // OBRS-73: both stops confirmed → prefill hero bar + scroll up, NO navigation, NO modal
     await page.waitForTimeout(600);
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
     expect(page.url()).not.toContain('schedule-booking');
 
     // No blocking SweetAlert dialog

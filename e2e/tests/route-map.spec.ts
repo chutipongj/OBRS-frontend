@@ -262,7 +262,7 @@ test.describe('Route Map – Success State', () => {
     await expect(toast.locator('.swal2-confirm')).toHaveCount(0);
 
     // Must NOT navigate away from /home
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
 
     // The active tab should have ALREADY switched to Drop-off (no dismiss needed)
     const dropoffTab = page.locator('.p-tabview-nav li').filter({ hasText: 'Drop-off' }).first();
@@ -302,7 +302,7 @@ test.describe('Route Map – Success State', () => {
     // Toast must NOT have an OK/confirm button
     await expect(toast.locator('.swal2-confirm')).toHaveCount(0);
 
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
 
     // The active tab should have ALREADY switched back to Pickup (no dismiss needed)
     const pickupTab = page.locator('.p-tabview-nav li').filter({ hasText: 'Pickup' }).first();
@@ -343,7 +343,7 @@ test.describe('Route Map – Success State', () => {
 
     // Must NOT navigate — page stays on /home
     await page.waitForTimeout(500);
-    expect(page.url()).toContain('/home');
+    expect(new URL(page.url()).pathname).toBe('/');
     expect(page.url()).not.toContain('schedule-booking');
 
     // Hero search bar source field should now show the picked pickup station ("Nong Sak")

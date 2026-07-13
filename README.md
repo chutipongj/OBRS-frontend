@@ -158,6 +158,48 @@ exact pattern `ReportsStore` established: `fetch()` calls the single typed
 endpoint and `emptySnapshot()` covers the API-returns-no-data edge. See
 `docs/adr/0013-dashboard-rebase-on-admin-collection-store.md`.
 
+### Vehicle Maintenance (`/admin/vehicles` → Maintenance tab, OBRS-209)
+
+`VehiclesPageComponent` gained a second tab (`.schedule-tabs`/`.schedule-tab`,
+the same tab-bar markup `SchedulesPageComponent` uses for its Sets/Schedules
+tabs — no new route, no new guard). The tab starts **disabled** (visible, not
+hidden) until an admin clicks the per-row "Manage maintenance" `admin-icon-btn`
+on a vehicle, which focuses that vehicle and switches to it — copying
+`SchedulesPageComponent.viewSchedulesForSet()`'s focus-banner pattern
+("Showing maintenance for X · Back to vehicle list").
+
+The tab body is `AppVehicleMaintenancePanelComponent`
+(`src/app/modules/admin/pages/vehicles/vehicle-maintenance/`), a dumb,
+self-sufficient component mirroring `BoardingListComponent`
+(`src/app/shared/components/boarding-list/`): it owns its own
+`VehicleMaintenanceStore` instance via `providers: [VehicleMaintenanceStore]`
+on the component (component-scoped, **not** `providedIn: 'root'`) so a
+remount for a newly-focused vehicle never replays a previous vehicle's cached
+maintenance list. Only the panel's own `ngOnChanges` calls
+`store.setVehicleId()` + `refresh()` (single-owner re-bind contract); the host
+page must not call it. Create/update mutations `await store.refresh()`
+afterward rather than optimistic-splice, since the server assigns id/timestamps.
+
+The maintenance-status select is `app-admin-dropdown` (not `p-selectButton` —
+design-system §11), required, placeholder-start with no pre-seeded default on
+create, seeded from the record's current status on edit. There is no hard
+delete: a record is closed by editing it to the "completed" status.
+
+**Empty-state pattern** (new, design-system §12 candidate): a `200 + []`
+response renders a centered icon/title/body block
+(`.vehicle-maintenance-empty`, tokens `var(--admin-muted)`/`var(--admin-text)`
+only) that **replaces the whole table section**, not a zero-row table under a
+banner — reuse this instead of the older zero-row-table pattern when a list's
+empty state deserves more than one muted `<tr>`.
+
+Schedule create/update also surfaces a new backend error: a picked vehicle
+with an open maintenance record covering the departure date returns
+`errorCode: VEHICLE_UNDER_MAINTENANCE`. `SchedulesPageComponent.submitSchedule()`
+branches on this stable code (never the localized message) and renders it as
+an inline `<small class="schedule-form-message admin-error">` under the
+Vehicle field instead of a second `AlertService.error()` toast — cleared on
+vehicle/date change and on modal close.
+
 Like Reports, the `revenue` field on `tiles` is **optional** and the Revenue
 tile renders off its **presence** (`showRevenue`), never a client-side role
 check — forward-compat for a future viewer (e.g. salesperson) the server
@@ -167,6 +209,36 @@ no picker — the endpoint is always "today" in Bangkok time) and is defined as
 with departure-date occupancy but zero booking-date bookings is **not**
 empty (same divergent-basis reasoning as Reports' `isEmptyRange`, carried
 over as `isEmptyDay`).
+
+## Customer Account Page & Email-Change Flow
+
+`/account` (OBRS-84) is the first customer "account settings" page — a
+minimal card showing the signed-in user's login email (read from
+`AuthService.getUsername()`, no new GET) with a single "Change email"
+action. It uses the same guard shape as `/my-bookings`
+(`AuthGuard`, `data: { customerArea: true, requireAuth: true }`) and does
+**not** touch the area-based access model.
+
+"Change email" opens `ChangeEmailDialogComponent` — the same hand-rolled
+modal chrome as `ChangeStopDialogComponent` (backdrop, `role="dialog"`,
+top-right ×, Escape-to-close; ADR-0010) — which POSTs the current password +
+new email to `AuthService.requestEmailChange()`. The new email is **not**
+applied yet: the backend emails a confirmation link to the new address, and
+only applies the change once that link is opened. The dialog's new-email
+field reuses `register.component.ts`'s debounced duplicate-check pipeline
+(`debounceTime(500)` → `distinctUntilChanged()` → `switchMap(userService.checkExistEmail)`).
+
+The confirmation link opens the new public route `/change-email/confirm`
+(no guard — mirrors `/verify-email`'s shape), which reads `?token=` and
+calls `AuthService.confirmEmailChange()`. Because the backend's old JWT
+stops authenticating once the change is confirmed, a successful confirm
+calls `authService.clearAuthData()` before redirecting to
+`/login?reason=email-changed` (+ `&email=` when returned), so no stale token
+lingers to 401 with a confusing toast. `LoginComponent` reads that query pair
+to show `LOGIN.EMAIL_CHANGED_BANNER` and prefill the email field. An
+already-used/expired confirmation token renders a **neutral** (not red)
+state — the link is expected to be opened twice in normal use. See
+`docs/adr/0014-account-identity-settings-page.md`.
 
 This page is the **second** `.admin-card.admin-kpi` tile consumer the Reports
 section above predicted — the markup is still copy-pasted rather than
@@ -324,3 +396,95 @@ change-stop has no options-list step to bounce back to; only
 `NOT_CONFIRMED`/`MAX_COUNT` are terminal (close + toast). See
 `docs/adr/0010-change-stop-dialog.md` for the full reasoning behind all
 three reuse decisions and the confirm-error persistence rule.
+
+## Authoritative trip distance/duration estimates (OBRS-138)
+
+Customer-facing trip-planning surfaces (the home route map's travel summary,
+the schedule-booking list, and the review-schedule-booking summary cards)
+show a **free, authoritative** pickup→dropoff distance/duration estimate
+derived from the seeded `route_stops` offsets, replacing an earlier
+client-side proxy ratio. No Google Distance-Matrix call is made anywhere —
+the map keeps its own road-snapped Directions + two-tier cache for drawing
+the route line; these estimates are a separate, purely arithmetic derivation
+from data already on the page.
+
+- **`tripEstimateFromStops(pickup, dropoff)`** (`src/app/shared/lib/trip-format.ts`)
+  is the single pure function every consumer calls: `distanceKm = |Δ
+  distanceKmFromOrigin|`, `durationMinutes = |Δ offsetMinutesFromOrigin|`,
+  each resolved **independently** — a missing value on either stop yields
+  `null` for that one figure rather than fabricating a misleading `0`. Never
+  gate distance on duration or vice versa.
+- **`RouteMapService.getPickupDropoffCached(slug)`** (`src/app/services/route-map/route-map.service.ts`)
+  is a reusable **request-dedup** pattern: a session-scoped in-memory
+  `Map<slug, Observable>` plus `shareReplay({ bufferSize: 1, refCount: false })`
+  and `catchError(() => of(null))`, so N schedule rows on the same route fire
+  exactly one HTTP call and a failure degrades to "chip absent" rather than
+  an `AlertService` error. This is intentionally lighter than the map panel's
+  two-tier (localStorage + TTL) Directions cache — reach for this pattern
+  whenever a list view needs to dedupe repeated lookups of the same
+  reference data by key within one page load, without needing persistence
+  across reloads.
+- **The return-leg swap**: a return schedule's `routeSlug` is the *reverse*
+  physical route, so its `pickup[]` holds the destination-city stops and its
+  `dropoff[]` holds the origin-city stops. Every consumer resolves
+  `fromSlug`/`toSlug` from the search filter's `startStationId`/
+  `stopStationId` once, then swaps which slug is searched in `pickup[]` vs
+  `dropoff[]` for the return leg only (`pickupSlug = toSlug`, `dropoffSlug =
+  fromSlug`). Getting this backwards silently empties every return-leg chip
+  (`.find()` never matches), so any new consumer of `getPickupDropoffCached`
+  for a return leg must apply the same swap.
+- **Slug space**: `StationApi.slug` (from `GET /api/stops`, the schedule
+  filter's station store) and `StopEntry.slug` (from `GET
+  /api/routes/{slug}/pickup-dropoff`) key off the same underlying
+  `stops.slug` column server-side — station ids are resolved to slugs once
+  per consumer (`stationSlugById`/`stationSlugById`-style private helpers
+  mirroring the existing `getStationLabelById` pattern) and matched directly
+  against `RouteStop.slug`, no translation layer needed.
+
+## Seat-scarcity display (OBRS-229)
+
+The schedule-booking list surfaces the exact remaining-seat count **only**
+when seats are scarce; otherwise no seat-count text renders at all. This is
+scarcity-only by design, not a full available/low/sold-out tri-state — the
+search endpoint (`ScheduleRepository.searchSchedulesWithAvailability`)
+already filters out any schedule without enough seats for the requested
+party (`AND (capacity - occupied) >= :numberOfPassengers`), so a sold-out
+row can never reach this component; every row shown here is bookable. A
+neutral "seats available" label was considered and dropped as redundant —
+the row's mere presence already implies availability.
+
+- **`isLowSeatCount(availableSeats, threshold)`**
+  (`src/app/shared/lib/trip-format.ts`) is the single pure predicate:
+  `true` for `1..threshold` seats (inclusive), `false` otherwise — including
+  `0`/missing, which is deliberately not a "warning" case since it can't
+  occur here.
+- `ScheduleBookingListComponent.LOW_SEAT_THRESHOLD = 5` is the current
+  threshold; `isLowSeats(availableSeats)` wraps the predicate with it. Both
+  legs (`departure`/`return`) call the same method — no duplicated logic.
+- Template convention (`schedule-booking-list.component.html`): the
+  `.availability` **div itself** carries `*ngIf="isLowSeats(...)"` — when
+  seats are comfortable the div is absent from the DOM entirely (no empty
+  wrapper, no layout gap), and when low it contains only a single
+  `seat-status seat-status--low` span rendering `SCHEDULE_BOOKING.SEAT_REMAIN
+  {n} SCHEDULE_BOOKING.SEAT_UNIT`. Reuse this pattern (`*ngIf` on the
+  container, not the inner text) for any other surface that needs a
+  scarcity-only cue rather than re-deriving the threshold check inline.
+- `SCHEDULE_BOOKING.SEAT_PER_PASSENGER` (a leading-slash string, e.g.
+  `/ที่นั่ง`) lives on the **`.price` line**, not the availability line — a
+  `<span class="price-unit">` directly after `BAHT_UNIT` so the price reads
+  as one grouped unit ("200 บาท/ที่นั่ง"). It used to sit in `.availability`
+  next to a `|` separator; once the neutral/sold-out branches were cut that
+  pipe went orphaned, and even conditioned on `isLowSeats(...)` it produced
+  a visible "ที่นั่ง" duplicated on the same line as the low-seat warning.
+  Grouping the per-seat unit with the price it actually describes removes
+  both problems at once.
+- Styling: `.seat-status--low` (red, semibold) on the availability span;
+  `.price-unit` (small, muted — matches the old availability-line look) on
+  the price-line unit. Dark mode re-asserts `.seat-status--low`'s colour in
+  `src/styles/dark-theme.scss` §14, next to the existing
+  `.text-error`/`.form-required` re-assert block, since the blanket
+  `.schedule-item *` dark-mode rule would otherwise wash it out to
+  `$dk-text`.
+- The select button on both legs has no seat-based disable — every rendered
+  row is already bookable per the search filter above, so it's always
+  enabled.

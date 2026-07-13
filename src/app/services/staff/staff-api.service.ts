@@ -12,7 +12,12 @@ import {
   BoardingScanRequest,
   BoardingScanResultDto,
 } from '../../shared/interfaces/ticket-boarding.interface';
-import { DriverDto } from '../admin/admin-api.service';
+import { AdminUserDto, DriverDto } from '../admin/admin-api.service';
+// OBRS-100: type-only — BoardingListComponent (shared/) reuses the response
+// SHAPE for its supplementary print/export trip header, but must not take a
+// runtime dependency on AdminApiService (see docs/adr/0015). Same type-only
+// precedent as DriverDto above, just made explicit with `import type`.
+import type { AdminScheduleDto } from '../admin/admin-api.service';
 
 export interface ScheduleSearchReqDto {
   bookingType: 'one_way' | 'return';
@@ -82,6 +87,11 @@ export interface WalkInTripDto {
   reservedUnpaidCount: number;
   soldPaidCount: number;
   availableSeatNumbers: string[];
+  // OBRS-283: mirrors AdminScheduleDto's same-named fields (admin-api.service.ts)
+  // — drives the delete-vs-cancel branch on the walk-in sell page's trip menu.
+  // Optional/undefined on a cached row predating this field.
+  deletable?: boolean;
+  confirmedBookingCount?: number;
 }
 
 export interface WalkInRouteGroupDto {
@@ -177,8 +187,19 @@ export interface BoardingListItemDto {
     label: string;
   };
   /** OBRS-96: populated once the ticket has been boarded via the manual
-   * boarding-scan box (undefined until then — additive, optional field). */
+   * boarding-scan box (undefined until then — additive, optional field).
+   * Status-neutral (docs/adr/0030-boarding-state-model.md, backend): a
+   * `confirmed` ticket can be boarded without its `status` changing. */
   boardedAt?: string;
+  /** OBRS-130: the staff user id who boarded this ticket (via scan or the
+   * manual Board button) — undefined until boarded. */
+  boardedBy?: number;
+  /** OBRS-130: display name for `boardedBy`, resolved server-side so it
+   * survives a refresh. Only the optimistic row for an action *this* operator
+   * just performed may be seeded client-side (see `boarding-list.component.ts`
+   * — never seed it onto a pre-existing boarded row, that was the
+   * misattribution bug). */
+  boardedByName?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -203,10 +224,17 @@ export class StaffApiService {
     );
   }
 
-  checkIn(ticketId: number): Observable<ResponseAPI<null>> {
-    return this.http.post<ResponseAPI<null>>(
-      `${environment.apiUrl}/api/private/tickets/${ticketId}/check-in`,
-      {},
+  /** OBRS-100: thin passthrough for the boarding-list print/export trip
+   * header (route/departure/vehicle/driver) — `BoardingListComponent` calls
+   * this directly rather than `AdminApiService.getScheduleById()` so a
+   * `shared/` component doesn't take a runtime dependency on an
+   * admin-domain-named service (see docs/adr/0015). Errors are suppressed
+   * globally (skipContext) because the caller degrades silently on failure
+   * (e.g. a driver 403'd off a schedule they don't own) rather than
+   * surfacing a toast for a supplementary header fetch. */
+  getScheduleById(id: number): Observable<ResponseAPI<AdminScheduleDto>> {
+    return this.http.get<ResponseAPI<AdminScheduleDto>>(
+      `${environment.apiUrl}/api/private/schedules/${id}`,
       { context: this.skipContext }
     );
   }
@@ -217,6 +245,10 @@ export class StaffApiService {
   // booking.service.ts / promotion.service.ts, as defense-in-depth against
   // the OBRS-187 force-logout bug even though the backend guarantees a
   // domain 400/409 (never a bare 401) for every rejected scan.
+  //
+  // OBRS-130: `board()`/`unboard()` reuse this same context for the identical
+  // reason — a domain 409 (ALREADY_BOARDED/NOT_BOARDED) on a manual boarding
+  // action must never force-logout the operator (OBRS-187 trap).
   private readonly boardingScanContext = new HttpContext()
     .set(SKIP_GLOBAL_ERROR_ALERT, true)
     .set(SKIP_GLOBAL_LOADING_ALERT, true)
@@ -226,6 +258,44 @@ export class StaffApiService {
     return this.http.post<ResponseAPI<BoardingScanResultDto>>(
       `${environment.apiUrl}/api/private/tickets/boarding-scan`,
       request,
+      { context: this.boardingScanContext }
+    );
+  }
+
+  /** OBRS-130: manually board a ticket from the boarding-list manifest
+   * (replaces the retired `checkIn()`/`/check-in` action on this flow). */
+  board(ticketId: number): Observable<ResponseAPI<null>> {
+    return this.http.post<ResponseAPI<null>>(
+      `${environment.apiUrl}/api/private/tickets/${ticketId}/board`,
+      {},
+      { context: this.boardingScanContext }
+    );
+  }
+
+  /** OBRS-130: reverse a boarding stamp (salesperson/admin only — enforced by
+   * the backend `@PreAuthorize` and mirrored client-side by hiding the
+   * control for drivers). */
+  unboard(ticketId: number): Observable<ResponseAPI<null>> {
+    return this.http.post<ResponseAPI<null>>(
+      `${environment.apiUrl}/api/private/tickets/${ticketId}/unboard`,
+      {},
+      { context: this.boardingScanContext }
+    );
+  }
+
+  /** OBRS-256: forward-only schedule status transition
+   * (`scheduled` → `departed` → `arrived`), driven by the boarding-list
+   * header strip. Reuses `boardingScanContext` — a domain 409
+   * (`SCHEDULE_TRANSITION_ILLEGAL`) must never force-logout the operator nor
+   * duplicate a global alert (OBRS-187 trap), same reasoning as
+   * `board()`/`unboard()`. */
+  updateScheduleStatus(
+    id: number,
+    status: 'departed' | 'arrived'
+  ): Observable<ResponseAPI<{ scheduleId: number; status: string }>> {
+    return this.http.patch<ResponseAPI<{ scheduleId: number; status: string }>>(
+      `${environment.apiUrl}/api/private/schedules/${id}/status`,
+      { status },
       { context: this.boardingScanContext }
     );
   }
@@ -288,6 +358,16 @@ export class StaffApiService {
   getDrivers(): Observable<ResponseAPI<DriverDto[]>> {
     return this.http.get<ResponseAPI<DriverDto[]>>(
       `${environment.apiUrl}/api/private/users/drivers`,
+      { context: this.skipContext }
+    );
+  }
+
+  // Current user's own profile — GET /api/private/users/me. Used by the walk-in
+  // sell page (OBRS-193) to read the salesperson's assigned salesPointStop and
+  // default the pickup stop selection to it.
+  getMe(): Observable<ResponseAPI<AdminUserDto>> {
+    return this.http.get<ResponseAPI<AdminUserDto>>(
+      `${environment.apiUrl}/api/private/users/me`,
       { context: this.skipContext }
     );
   }

@@ -21,8 +21,18 @@
       </div>
     </div>
 
-    <!-- CENTER: Seat map / trip details / boarding -->
-    <div class="col-xl-5 col-lg-5 col-md-12">
+    <!-- CENTER: Seat map / trip details / boarding.
+         The checkout column (right) is only meaningful for the Ticket Sales
+         tab (index 0) — on Trip Details/Boarding it's dead space that used to
+         squeeze the boarding manifest into a horizontal scroll. Reclaim it:
+         col-xl-5 (unchanged) on Ticket Sales, col-xl-9 (5+4, filling the
+         checkout column's freed 4) on the other tabs. Left stays col-xl-3
+         either way (3+9=12). On md the columns already stack full-width, so
+         this only affects the xl/lg breakpoints. -->
+    <div
+      class="col-lg-5 col-md-12"
+      [class.col-xl-5]="activeTabIndex === 0"
+      [class.col-xl-9]="activeTabIndex !== 0">
       <div class="card h-100 border-0 shadow-sm">
         <div class="card-body p-2">
           <app-walk-in-center-panel
@@ -42,14 +52,15 @@
             (pickupChange)="onPickupChanged($event)"
             (dropoffChange)="onDropoffChanged($event)"
             (tripDetailsUpdated)="onTripDetailsUpdated($event)"
-            (refreshTripsRequested)="onRefreshTripsRequested()">
+            (refreshTripsRequested)="onRefreshTripsRequested()"
+            (activeTabChange)="activeTabIndex = $event">
           </app-walk-in-center-panel>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT: Checkout -->
-    <div class="col-xl-4 col-lg-4 col-md-12">
+    <!-- RIGHT: Checkout — only meaningful on the Ticket Sales tab. -->
+    <div class="col-xl-4 col-lg-4 col-md-12" *ngIf="activeTabIndex === 0">
       <div class="card h-100 border-0 shadow-sm">
         <div class="card-body p-2">
           <app-walk-in-checkout
@@ -90,14 +101,25 @@
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label">{{ 'STAFF.SCHEDULES.DEPARTURE_DATE' | translate }}</label>
-                  <p-calendar formControlName="departureDate" [showIcon]="true" dateFormat="yy-mm-dd"
-                              [class.is-invalid]="isScheduleFieldInvalid('departureDate')"></p-calendar>
+                  <p-calendar formControlName="departureDate" [showIcon]="true" [iconDisplay]="'input'" dateFormat="yy-mm-dd"
+                              styleClass="app-date-field" panelStyleClass="app-date-field-panel"
+                              [class.is-invalid]="isScheduleFieldInvalid('departureDate')">
+                    <ng-template pTemplate="inputicon">
+                      <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+                    </ng-template>
+                  </p-calendar>
                   <div class="invalid-feedback d-block" *ngIf="isScheduleFieldInvalid('departureDate')">{{ 'ADMIN.VALIDATION.REQUIRED' | translate }}</div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label">{{ 'STAFF.SCHEDULES.DEPARTURE_TIME' | translate }}</label>
                   <p-calendar formControlName="departureTime" [timeOnly]="true" hourFormat="24"
-                              [class.is-invalid]="isScheduleFieldInvalid('departureTime')"></p-calendar>
+                              [showIcon]="true" [iconDisplay]="'input'"
+                              styleClass="app-date-field" panelStyleClass="app-date-field-panel"
+                              [class.is-invalid]="isScheduleFieldInvalid('departureTime')">
+                    <ng-template pTemplate="inputicon">
+                      <img class="app-date-field-icon" src="icons/calendar.svg" [attr.alt]="'COMMON.CALENDAR_ICON_ALT' | translate" />
+                    </ng-template>
+                  </p-calendar>
                   <div class="invalid-feedback d-block" *ngIf="isScheduleFieldInvalid('departureTime')">{{ 'ADMIN.VALIDATION.REQUIRED' | translate }}</div>
                 </div>
                 <div class="col-md-6">
@@ -146,11 +168,20 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_TITLE' | translate }}</h5>
+          <h5 class="modal-title">
+            {{ (scheduleDeleteModalMode === 'delete' ? 'ADMIN.MESSAGES.DELETE_CONFIRM_TITLE' : 'ADMIN.MESSAGES.CANCEL_TRIP_CONFIRM_TITLE') | translate }}
+          </h5>
           <button class="btn-close" (click)="closeScheduleDelete()"></button>
         </div>
         <div class="modal-body">
-          <p>{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_BODY' | translate }}</p>
+          <p *ngIf="scheduleDeleteModalMode === 'delete'">{{ 'ADMIN.MESSAGES.DELETE_CONFIRM_BODY' | translate }}</p>
+          <!-- OBRS-283: deletable===false — soft-cancel copy instead of the hard-delete warning above. -->
+          <p *ngIf="scheduleDeleteModalMode === 'cancel-refund'">
+            {{ 'ADMIN.MESSAGES.CANCEL_TRIP_REFUND_BODY' | translate: { count: deletingTrip?.confirmedBookingCount ?? 0 } }}
+          </p>
+          <p *ngIf="scheduleDeleteModalMode === 'cancel-no-refund'">
+            {{ 'ADMIN.MESSAGES.CANCEL_TRIP_NO_REFUND_BODY' | translate }}
+          </p>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" (click)="closeScheduleDelete()" [disabled]="isScheduleDeleting">
@@ -158,7 +189,7 @@
           </button>
           <button class="btn btn-danger" (click)="confirmDeleteSchedule()" [disabled]="isScheduleDeleting">
             <span *ngIf="isScheduleDeleting" class="spinner-border spinner-border-sm me-1"></span>
-            {{ 'ADMIN.MESSAGES.DELETE_BTN' | translate }}
+            {{ (scheduleDeleteModalMode === 'delete' ? 'ADMIN.MESSAGES.DELETE_BTN' : 'ADMIN.MESSAGES.CANCEL_TRIP_BTN') | translate }}
           </button>
         </div>
       </div>

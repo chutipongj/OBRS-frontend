@@ -8,7 +8,8 @@ import {
 } from '@angular/core';
 import html2canvas from 'html2canvas';
 import QRCode from 'qrcode';
-import { TicketPassenger } from '../../interfaces/e-ticket.interface';
+import { TicketLeg, TicketPassenger } from '../../interfaces/e-ticket.interface';
+import { buildMapsDirectionsUrl } from '../../lib/maps-directions-url';
 
 /**
  * Presentational e-ticket "paper". Renders the same markup/style as the booking
@@ -26,14 +27,7 @@ export class ETicketCardComponent implements OnChanges {
 
   @Input() bookingNumber = '-';
   @Input() ticketNumber = '-';
-  @Input() travelDate = '-';
-  @Input() travelTime = '-';
-  @Input() route = '-';
-  @Input() origin = '-';
-  @Input() destination = '-';
-  @Input() vehicleType = '-';
-  @Input() vehiclePlate = '-';
-  @Input() seats = '-';
+  @Input() legs: TicketLeg[] = [];
   @Input() paymentDate = '-';
   @Input() totalAmount = '0.00';
   @Input() passengers: TicketPassenger[] = [];
@@ -51,6 +45,19 @@ export class ETicketCardComponent implements OnChanges {
 
   trackByIndex(index: number): number {
     return index;
+  }
+
+  /** OBRS-269: opens Google Maps Directions from the user's current location to
+   *  this leg's own pickup stop — a deep-link only (no Directions API call).
+   *  Guarded on both coords being present; the template hides the button
+   *  entirely (not disables it) when either is null, so this is a defensive
+   *  no-op rather than the primary gate. */
+  navigateToPickup(leg: TicketLeg): void {
+    if (leg.pickupLatitude == null || leg.pickupLongitude == null) {
+      return;
+    }
+    const url = buildMapsDirectionsUrl(leg.pickupLatitude, leg.pickupLongitude);
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   async downloadTicketImage(): Promise<void> {
@@ -71,7 +78,9 @@ export class ETicketCardComponent implements OnChanges {
             .querySelector('.ticket-paper')
             ?.classList.add('is-exporting');
         },
-        ignoreElements: (element) => element.classList.contains('download-btn'),
+        ignoreElements: (element) =>
+          element.classList.contains('download-btn') ||
+          element.classList.contains('ticket-nav-btn'),
       });
 
       this.triggerTicketDownload(canvas.toDataURL('image/png'));
