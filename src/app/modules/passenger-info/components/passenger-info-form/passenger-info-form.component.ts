@@ -237,6 +237,27 @@ export class PassengerInfoFormComponent implements OnInit, OnDestroy {
     this.emitValidity();
   }
 
+  /**
+   * OBRS-132: explicit "auto-allocate" affordance. When enabled for a passenger, the seat map is
+   * hidden and the seat is left blank so the backend assigns one (group-together aware). Reuses the
+   * existing `isSelectSeat` control as the hook: `isSelectSeat === true` means the traveller picks a
+   * seat manually (today's default); turning auto-allocate ON flips it to `false` and clears any
+   * seat already picked for both legs so the payload emits `seatNumber: null`.
+   */
+  onAutoAllocateChange(index: number, isAutoAllocate: boolean): void {
+    const group = this.passengerData.at(index);
+    if (!group) {
+      return;
+    }
+
+    group.get('isSelectSeat')?.setValue(!isAutoAllocate);
+    if (isAutoAllocate) {
+      group.get('passengerSeat')?.setValue('');
+      group.get('passengerSeatReturn')?.setValue('');
+    }
+    this.emitValidity();
+  }
+
   getTakenSeats(currentIndex: number): string[] {
     return this.passengerData.controls
       .map((ctrl, idx) => (idx === currentIndex ? null : ctrl.get('passengerSeat')?.value || null))

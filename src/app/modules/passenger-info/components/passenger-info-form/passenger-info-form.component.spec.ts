@@ -77,4 +77,37 @@ describe('PassengerInfoFormComponent', () => {
       expect(component.getFormValue(1, 'passengerSeatReturn')).toBe('');
     });
   });
+
+  describe('auto-allocate toggle (OBRS-132)', () => {
+    it('turning auto-allocate ON sets isSelectSeat=false and clears both legs’ seats', () => {
+      component.insertPassenger(true);
+      component.setPassengerSeat(0, '3');
+      component.setPassengerSeatReturn(0, '7');
+
+      component.onAutoAllocateChange(0, true);
+
+      expect(component.getFormValue(0, 'isSelectSeat')).toBeFalse();
+      expect(component.getFormValue(0, 'passengerSeat')).toBe('');
+      expect(component.getFormValue(0, 'passengerSeatReturn')).toBe('');
+    });
+
+    it('turning auto-allocate OFF restores manual selection (isSelectSeat=true)', () => {
+      component.insertPassenger(true);
+      component.onAutoAllocateChange(0, true);
+      component.onAutoAllocateChange(0, false);
+      expect(component.getFormValue(0, 'isSelectSeat')).toBeTrue();
+    });
+
+    it('auto-allocate is per-passenger — toggling one does not affect another', () => {
+      component.insertPassenger(true);
+      component.insertPassenger(true);
+      component.setPassengerSeat(1, '5');
+
+      component.onAutoAllocateChange(0, true);
+
+      expect(component.getFormValue(0, 'isSelectSeat')).toBeFalse();
+      expect(component.getFormValue(1, 'isSelectSeat')).toBeTrue();
+      expect(component.getFormValue(1, 'passengerSeat')).toBe('5');
+    });
+  });
 });
